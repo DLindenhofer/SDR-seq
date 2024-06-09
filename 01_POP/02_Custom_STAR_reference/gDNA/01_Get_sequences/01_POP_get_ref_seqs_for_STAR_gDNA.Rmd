@@ -1,0 +1,105 @@
+---
+title: "20231117_SDR005_get_ref_seqs_for_STAR"
+author: "Dominik Lindenhofer"
+date: "2023-11-17"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+## Load libs
+
+
+```{r}
+
+
+library(BSgenome)
+library(Biostrings)
+library(dplyr)
+library(GenomicRanges)
+```
+
+
+
+#For gDNA
+
+#load data
+
+```{r}
+
+SDR005_gDNA_targets_submitted <- read.delim("Input/POP_targets_submitted_hg38.bed", header = FALSE)
+
+#SDR005_gDNA_targets_submitted <- SDR005_gDNA_targets_submitted[c(2:31),]
+
+#Keep missed targets
+
+SDR005_gDNA_targets <- SDR005_gDNA_targets_submitted
+
+#Load amplicons 
+
+SDR005_gDNA_amplicons <- read.delim("Input/POP_amplicon_hg38.bed", header = FALSE)
+
+colnames(SDR005_gDNA_targets) <- c("seqnames", "start", "end", "name")
+colnames(SDR005_gDNA_amplicons) <- c("seqnames", "start", "end", "name")
+
+
+SDR005_gDNA_targets_gr <- makeGRangesFromDataFrame(SDR005_gDNA_targets, keep.extra.columns = TRUE)
+SDR005_gDNA_amplicons_gr <- makeGRangesFromDataFrame(SDR005_gDNA_amplicons, keep.extra.columns = TRUE)
+
+
+
+Overlap <- countOverlaps(SDR005_gDNA_amplicons_gr, SDR005_gDNA_targets_gr)
+SDR005_gDNA_amplicons_gr$count_overlaps <- Overlap
+
+
+
+# Find overlaps
+
+Overlap <- findOverlaps(SDR005_gDNA_amplicons_gr, SDR005_gDNA_targets_gr)
+targets <- CharacterList(split(SDR005_gDNA_targets_gr$name[subjectHits(Overlap)],queryHits(Overlap)))
+mcols(SDR005_gDNA_amplicons_gr) <- DataFrame(mcols(SDR005_gDNA_amplicons_gr), targets)
+
+SDR005_gDNA_amplicons_df <- as.data.frame(SDR005_gDNA_amplicons_gr)
+
+SDR005_gDNA_amplicons_df$targets <- sapply(SDR005_gDNA_amplicons_df$targets, function(lst) paste(lst, collapse = ","))
+
+
+write.table(SDR005_gDNA_amplicons_df, file = "Input/POP_amplicon_hg38_targets_add.txt", quote = FALSE, row.names = FALSE, col.names = TRUE, sep = "\t")
+
+
+```
+
+
+#Get reference sequence
+
+```{r}
+# human genome BSgenome object (needs to be istalled from Bioconductor)
+hg38 <- getBSgenome("BSgenome.Hsapiens.UCSC.hg38")
+
+#get sequences for gDNA targets
+SDR005_gDNA_amplicons <- read.delim("Input/POP_amplicon_hg38.bed", header = FALSE)
+colnames(SDR005_gDNA_amplicons) <- c("Chromosome", "Start", "End", "ID")
+
+
+gDNA_targets <- SDR005_gDNA_amplicons 
+
+gDNA_targets_seq <- data.frame()
+
+for (i in unique(gDNA_targets$ID)){
+  gDNA_targets_i <- gDNA_targets %>% dplyr::filter(gDNA_targets$ID == i)
+  gDNA_targets_dna_i <- as.character(Biostrings::getSeq(hg38, gDNA_targets_i$Chromosome, gDNA_targets_i$Start,	gDNA_targets_i$End))
+  gDNA_targets_dna_i_df <- data.frame(ID = i, Chromosome = gDNA_targets_i$Chromosome, Start = gDNA_targets_i$Start, End = gDNA_targets_i$End,  Sequence = gDNA_targets_dna_i)
+  gDNA_targets_seq <- rbind(gDNA_targets_seq, gDNA_targets_dna_i_df)
+}
+
+
+write.csv(gDNA_targets_seq, file = "Input/POP_gDNA_REF.csv", quote = FALSE, row.names = FALSE, col.names = TRUE, )
+
+
+```
+
+
+
+

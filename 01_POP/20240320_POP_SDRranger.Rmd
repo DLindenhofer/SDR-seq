@@ -1,0 +1,2523 @@
+---
+title: "20230710_SDR001_SDRranger"
+author: "Dominik Lindenhofer"
+date: "2023-07-10"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+## Load packages
+
+
+```{r}
+
+library(Seurat)
+library(dplyr)
+library(ggplot2)
+library(Matrix)
+library(reshape2)
+library(data.table)
+library(stringr)
+library(tidyr)
+library(scales)
+library(rtracklayer)
+library(RColorBrewer)
+library(pheatmap)
+library(here)
+
+plot_save_dir <- here("POP_plots")
+path_dir_gDNA_reads <- here("SDRranger_gDNA_output/raw_reads_bc_matrix")
+path_dir_cDNA_reads <- here("SDRranger_cDNA_output/raw_reads_bc_matrix")
+path_dir_cDNA_umis <- here("SDRranger_cDNA_output/raw_umis_bc_matrix")
+
+```
+
+# Use non filtered data as input
+
+#Construct gDNA metadata table - from gDNA reads
+
+```{r}
+
+#load read data sets 
+
+gDNA_data_features_reads <- read.delim(paste0(path_dir_gDNA_reads, "/features.tsv.gz"), header = FALSE) %>% dplyr::pull(1)
+gDNA_data_features_reads <- sub("_chrom", "\\1", gDNA_data_features_reads)
+gDNA_data_barcodes_reads <- read.delim(paste0(path_dir_gDNA_reads,"/barcodes.tsv.gz"), header = FALSE) %>% dplyr::pull(1)
+gDNA_mat_reads <- readMM(paste0(path_dir_gDNA_reads,"/matrix.mtx.gz"))
+
+dimnames(gDNA_mat_reads) <- list(gDNA_data_features_reads, gDNA_data_barcodes_reads)
+
+
+#Calculate sum reads and sum features
+gDNA_mat_reads_sum <- colSums(gDNA_mat_reads)
+gDNA_mat_reads_count <- apply(gDNA_mat_reads , 2, function(col) sum(col != 0))
+
+gDNA_mat_reads_meta <- data.frame(nReads_gDNA = gDNA_mat_reads_sum, 
+                                        nFeature_gDNA_reads = gDNA_mat_reads_count, 
+                                        cell = colnames(gDNA_mat_reads), 
+                                        row.names = colnames(gDNA_mat_reads)) %>%
+                                        replace(is.na(.), 0)
+
+
+```
+
+
+
+
+#Construct cDNA metadata table - from cDNA reads
+
+```{r}
+
+#In POP a mix of both primers was used for RT - both expected to be found per cell then - need to merge cells for this then 
+
+#load read data sets 
+cDNA_data_features_reads <- read.delim(paste0(path_dir_cDNA_reads,"/features.tsv.gz"), header = FALSE) %>% dplyr::pull(1)
+cDNA_data_features_reads <- sub("_chrom", "\\1", cDNA_data_features_reads)
+cDNA_data_barcodes_reads <- read.delim(paste0(path_dir_cDNA_reads, "/barcodes.tsv.gz"), header = FALSE) %>% dplyr::pull(1)
+cDNA_mat_reads <- readMM(paste0(path_dir_cDNA_reads, "/matrix.mtx.gz"))
+dimnames(cDNA_mat_reads) <- list(cDNA_data_features_reads, cDNA_data_barcodes_reads)
+
+
+#summarize both sbc barcodes per cell - otherwise to many cells found and sbc ratio is off
+
+#Split sample BC info and assign
+  
+cell_id_split <- data.frame(do.call('rbind', strsplit(as.character(cDNA_data_barcodes_reads),':',fixed=TRUE)))
+colnames(cell_id_split) <- c("cell", "sbc")
+cell_id_split$index <- 1:nrow(cell_id_split)
+
+
+#Rename barcodes for merging cells
+
+cDNA_data_barcodes_reads <- sub(":TCGCCTTA", ":PFA", cDNA_data_barcodes_reads)
+cDNA_data_barcodes_reads <- sub(":CTAGTACG", ":PFA", cDNA_data_barcodes_reads)
+cDNA_data_barcodes_reads <- sub(":TTCTGCCT", ":Glyoxal", cDNA_data_barcodes_reads)
+cDNA_data_barcodes_reads <- sub(":GCTCAGGA", ":Glyoxal", cDNA_data_barcodes_reads)
+
+dimnames(cDNA_mat_reads) <- list(cDNA_data_features_reads, cDNA_data_barcodes_reads)
+
+# Identify unique barcodes and their indices
+unique_barcodes <- unique(cDNA_data_barcodes_reads)
+barcode_indices <- match(cDNA_data_barcodes_reads, unique_barcodes)
+
+
+# Assuming `barcode_indices` maps each column to a unique barcode group
+n <- length(cDNA_data_barcodes_reads)  # Number of original columns
+m <- length(unique_barcodes)  # Number of unique barcodes (aggregated columns)
+
+# Create the mapping matrix
+# Rows correspond to original columns, columns to aggregated groups
+mapping_matrix <- sparseMatrix(i = 1:n, j = barcode_indices, x = rep(1, n), dims = c(n, m))
+
+# Assuming `cDNA_mat_reads_sub` is your original sparse matrix
+cDNA_mat_reads_agg <- cDNA_mat_reads %*% mapping_matrix
+
+# Assign dimnames to the new matrix
+dimnames(cDNA_mat_reads_agg) <- list(cDNA_data_features_reads, unique_barcodes)
+
+
+#Calculate sum reads and sum features - include CROP-seq in total number of reads
+cDNA_mat_reads_sum <- colSums(cDNA_mat_reads_agg)
+#cDNA_mat_reads_count <- apply(cDNA_mat_reads , 2, function(col) sum(col != 0))
+
+
+
+#For features only - exclude CROP-seq ones - only count cDNA ones
+#cDNA_mat_reads <- cDNA_mat_reads[1:47,]
+cDNA_mat_reads_count <- apply(cDNA_mat_reads_agg , 2, function(col) sum(col != 0))
+
+cDNA_mat_reads_meta <- data.frame(nReads_RNA = cDNA_mat_reads_sum, 
+                                        nFeatures_RNA_reads = cDNA_mat_reads_count,
+                                        cell_index = colnames(cDNA_mat_reads_agg), 
+                                        row.names = colnames(cDNA_mat_reads_agg))
+
+#Split sample BC info and assign
+  
+cell_id_split <- data.frame(do.call('rbind', strsplit(as.character(cDNA_mat_reads_meta$cell_index),':',fixed=TRUE)))
+colnames(cell_id_split) <- c("cell", "Type")
+cDNA_mat_reads_meta <- cbind(cDNA_mat_reads_meta, cell_id_split)
+
+
+#Calculate max_sbc ratio 
+cDNA_mat_reads_meta <- as.data.table(cDNA_mat_reads_meta)
+max_sbc <- cDNA_mat_reads_meta[cDNA_mat_reads_meta[, .I[which.max(nReads_RNA)], by=cell]$V1]
+sum_sbc <- cDNA_mat_reads_meta[, sum(nReads_RNA),by=list(cell)]
+ratio_sbc <- max_sbc$nReads_RNA/sum_sbc$V1
+max_sbc <- data.frame(cell_index = max_sbc$cell_index, cDNA_ratio_sbc = ratio_sbc, max_sbc = "max_sbc")
+cDNA_mat_reads_meta <- cDNA_mat_reads_meta %>% left_join(max_sbc, by = "cell_index")
+
+
+```
+
+
+
+#Merge gDNA and cDNA metatable files 
+
+```{r}
+
+
+#Merge with gDNA file - ATTENTION - certain gDNA values duplicated as possibilyt that same cell has different sample barcodes - only keep max sbc for later - retain now to be compatible to make a seurat object
+
+gDNA_cDNA_meta <- cDNA_mat_reads_meta %>% 
+  left_join(gDNA_mat_reads_meta, by = c("cell")) %>%
+                              replace(is.na(.), 0)
+
+
+#Add a column for the sum of reads for both cDNA/CROP and gDNA - keep only max sbc later
+gDNA_cDNA_meta$nReads_tot <- gDNA_cDNA_meta$nReads_RNA + gDNA_cDNA_meta$nReads_gDNA
+row.names(gDNA_cDNA_meta) <- gDNA_cDNA_meta$cell_index
+
+
+#Save combined metadata table
+
+#write.table(gDNA_cDNA_meta, file =paste0(plot_save_dir,"/SDR005_Run1_gDNA_cDNA_meta.tsv"), quote = FALSE, row.names = FALSE, col.names = TRUE, sep = "\t")
+
+
+#Merge cDNA meta file base on reads only - disregard sbc info - merge with gNDA mat - no duplicates made this time 
+
+cDNA_mat_reads_meta_wo_sbc <- cDNA_mat_reads_meta %>% 
+                              group_by(cell) %>% 
+                              summarise(nReads_RNA_wo_sbc = sum(nReads_RNA))%>%
+                              left_join(gDNA_mat_reads_meta, by = c("cell"))  %>%
+                              replace(is.na(.), 0)
+
+
+
+#Calculate total number of reads
+cDNA_mat_reads_meta_wo_sbc$nReads_tot <- cDNA_mat_reads_meta_wo_sbc$nReads_RNA_wo_sbc + cDNA_mat_reads_meta_wo_sbc$nReads_gDNA
+
+cDNA_mat_reads_meta_wo_sbc <- cDNA_mat_reads_meta_wo_sbc %>% mutate(selection_status = if_else(nReads_tot >= 500, "selected", "not_selected"))
+
+#Make rank rank plot for cutoff threshold setting
+
+group_colors <- c(selected = "#990000", not_selected = "black")
+
+index_v_line <- cDNA_mat_reads_meta_wo_sbc %>%
+  arrange(desc(nReads_tot)) %>%
+  mutate(index = row_number()) %>%
+  filter(nReads_tot == 500) %>%
+  summarize(last_index = last(index)) %>%
+  pull(last_index)
+
+
+title = "nReads_tot_ranked.png"
+p <- cDNA_mat_reads_meta_wo_sbc %>% 
+  arrange(desc(nReads_tot)) %>%
+  mutate(index = 1:nrow(cDNA_mat_reads_meta_wo_sbc)) %>%
+   ggplot() +
+  	geom_point(aes(x=index, y= nReads_tot, color = selection_status)) +
+    #geom_point(aes(x=index, y= nReads_gDNA), alpha = 0.2, color = "red")+
+  #geom_point(aes(x=index, y= nReads_RNA_wo_sbc), alpha = 0.2, color = "darkgreen")+
+  	theme_classic() +
+    scale_x_log10() + 
+  	scale_y_log10() + 
+  geom_vline(xintercept = index_v_line, linetype = "longdash")+
+      scale_fill_manual(values = group_colors)+
+      scale_color_manual(values = group_colors)+
+   guides(fill = "none", color = "none")+
+  #xlim(c(0.3,0.7))+
+  #	geom_vline(xintercept = 0.8)+
+      theme(plot.title = element_text(hjust=0.5, face="bold")) +
+  	ggtitle(title)
+     
+
+    ggsave(filename = title, path = plot_save_dir, plot = p, device = "png", scale = 1,
+       width = 15, height = 15, units = "cm", dpi = 300)
+
+index_v_line <- cDNA_mat_reads_meta_wo_sbc %>%
+arrange(desc(nReads_RNA_wo_sbc)) %>%
+  mutate(index = row_number()) %>%
+  filter(nReads_tot == 500) %>%
+  summarize(last_index = last(index)) %>%
+  pull(last_index)
+
+
+title = "nReads_RNA_ranked.png"
+p <- cDNA_mat_reads_meta_wo_sbc %>% 
+  arrange(desc(nReads_RNA_wo_sbc)) %>%
+  mutate(index = 1:nrow(cDNA_mat_reads_meta_wo_sbc)) %>%
+   ggplot() +
+  	geom_point(aes(x=index, y= nReads_RNA_wo_sbc, color = selection_status)) +
+    #geom_point(aes(x=index, y= nReads_gDNA), alpha = 0.2, color = "red")+
+  #geom_point(aes(x=index, y= nReads_RNA_wo_sbc), alpha = 0.2, color = "darkgreen")+
+  	theme_classic() +
+    scale_x_log10() + 
+  	scale_y_log10() + 
+   # geom_vline(xintercept = index_v_line, linetype = "longdash")+
+        scale_fill_manual(values = group_colors)+
+      scale_color_manual(values = group_colors)+
+   guides(fill = "none", color = "none")+
+  #xlim(c(0.3,0.7))+
+  #	geom_vline(xintercept = 0.8)+
+      theme(plot.title = element_text(hjust=0.5, face="bold")) +
+  	ggtitle(title)
+
+
+    ggsave(filename = title, path = plot_save_dir, plot = p, device = "png", scale = 1,
+       width = 15, height = 15, units = "cm", dpi = 300)
+  
+
+    
+index_v_line <- cDNA_mat_reads_meta_wo_sbc %>%
+arrange(desc(nReads_gDNA)) %>%
+  mutate(index = row_number()) %>%
+  filter(nReads_tot == 500) %>%
+  summarize(last_index = last(index)) %>%
+  pull(last_index)  
+    
+
+title = "nReads_gDNA_ranked.png"
+p <- cDNA_mat_reads_meta_wo_sbc %>% 
+  arrange(desc(nReads_gDNA)) %>%
+  mutate(index = 1:nrow(cDNA_mat_reads_meta_wo_sbc)) %>%
+   ggplot() +
+  	geom_point(aes(x=index, y= nReads_gDNA, color = selection_status)) +
+    #geom_point(aes(x=index, y= nReads_gDNA), alpha = 0.2, color = "red")+
+  #geom_point(aes(x=index, y= nReads_RNA_wo_sbc), alpha = 0.2, color = "darkgreen")+
+  	theme_classic() +
+    scale_x_log10() + 
+  	scale_y_log10() + 
+      #geom_vline(xintercept = index_v_line, linetype = "longdash")+
+        scale_fill_manual(values = group_colors)+
+      scale_color_manual(values = group_colors)+
+   guides(fill = "none", color = "none")+
+  #xlim(c(0.3,0.7))+
+  #	geom_vline(xintercept = 0.8)+
+      theme(plot.title = element_text(hjust=0.5, face="bold")) +
+  	ggtitle(title)
+
+  
+  ggsave(filename = title, path = plot_save_dir, plot = p, device = "png", scale = 1,
+       width = 15, height = 15, units = "cm", dpi = 300)
+
+
+```
+
+
+
+
+
+
+
+## Make seurat from cDNA and add metadata
+
+
+```{r}
+
+#Laod matrix - umis
+cDNA_data_features_umis <- read.delim(paste0(path_dir_cDNA_umis, "/features.tsv.gz"), header = FALSE) %>% dplyr::pull(1)
+cDNA_data_features_umis <- sub("_chrom", "\\1", cDNA_data_features_umis)
+cDNA_data_barcodes_umis <- read.delim(paste0(path_dir_cDNA_umis, "/barcodes.tsv.gz"), header = FALSE) %>% dplyr::pull(1)
+cDNA_mat <- readMM(paste0(path_dir_cDNA_umis, "/matrix.mtx.gz"))
+cDNA_data_features_umis <- sub("_gene", "\\1", cDNA_data_features_umis)
+dimnames(cDNA_mat) <- list(cDNA_data_features_umis, cDNA_data_barcodes_umis)
+
+#summarize both sbc barcodes per cell - otherwise to many cells found and sbc ratio is off
+
+#Split sample BC info and assign
+  
+cell_id_split <- data.frame(do.call('rbind', strsplit(as.character(cDNA_data_barcodes_umis),':',fixed=TRUE)))
+colnames(cell_id_split) <- c("cell", "sbc")
+cell_id_split$index <- 1:nrow(cell_id_split)
+
+
+#Rename barcodes for merging cells
+
+cDNA_data_barcodes_umis <- sub(":TCGCCTTA", ":PFA", cDNA_data_barcodes_umis)
+cDNA_data_barcodes_umis <- sub(":CTAGTACG", ":PFA", cDNA_data_barcodes_umis)
+cDNA_data_barcodes_umis <- sub(":TTCTGCCT", ":Glyoxal", cDNA_data_barcodes_umis)
+cDNA_data_barcodes_umis <- sub(":GCTCAGGA", ":Glyoxal", cDNA_data_barcodes_umis)
+
+dimnames(cDNA_mat) <- list(cDNA_data_features_umis, cDNA_data_barcodes_umis)
+
+# Identify unique barcodes and their indices
+unique_barcodes <- unique(cDNA_data_barcodes_umis)
+barcode_indices <- match(cDNA_data_barcodes_umis, unique_barcodes)
+
+
+# Assuming `barcode_indices` maps each column to a unique barcode group
+n <- length(cDNA_data_barcodes_umis)  # Number of original columns
+m <- length(unique_barcodes)  # Number of unique barcodes (aggregated columns)
+
+# Create the mapping matrix
+# Rows correspond to original columns, columns to aggregated groups
+mapping_matrix <- sparseMatrix(i = 1:n, j = barcode_indices, x = rep(1, n), dims = c(n, m))
+
+# Assuming `cDNA_mat_umis_sub` is your original sparse matrix
+cDNA_mat_agg <- cDNA_mat %*% mapping_matrix
+
+# Assign dimnames to the new matrix
+dimnames(cDNA_mat_agg) <- list(cDNA_data_features_umis, unique_barcodes)
+
+#Check if metadata is in correct order
+all.equal(colnames(cDNA_mat_agg), gDNA_cDNA_meta$cell_index)
+
+#Make Seurat
+cDNA_data_Seurat <- CreateSeuratObject(cDNA_mat_agg, project = "POP")
+
+#Add metadata
+cDNA_data_Seurat <- AddMetaData(object = cDNA_data_Seurat, metadata = gDNA_cDNA_meta)
+
+# Only keep highest sbc - filter out contaminating sbcs
+cDNA_data_Seurat <- subset(x = cDNA_data_Seurat, subset = max_sbc == "max_sbc")
+
+
+
+#Rename cells to make merging with gDNA later easier 
+
+cDNA_mat_mod <- cDNA_data_Seurat@assays$RNA$counts
+cells <- colnames(cDNA_data_Seurat)
+features <- rownames(cDNA_data_Seurat)
+metadata <- cDNA_data_Seurat@meta.data
+
+cells <- sub(":PFA", "\\1", cells)
+cells <- sub(":Glyoxal", "\\1", cells)
+dimnames(cDNA_mat_mod) <- list(features, cells)
+rownames(metadata) <- cells
+
+#Make Seurat
+cDNA_data_Seurat <- CreateSeuratObject(cDNA_mat_mod, project = "POP")
+
+#Add metadata
+cDNA_data_Seurat <- AddMetaData(object = cDNA_data_Seurat, metadata = metadata)
+
+
+```
+
+
+#Cutoff to filter out low read cells
+
+```{r}
+# Filter out low quality cells based on reads - yield around 10000-12000 cells
+
+cDNA_data_Seurat <- subset(x = cDNA_data_Seurat, subset = nReads_tot >= 500)
+
+saveRDS(cDNA_data_Seurat, paste0(plot_save_dir,"/SDR005_Run1_Seurat_max_sbc_500reads_tot_cut.rds"))
+
+metadata <- cDNA_data_Seurat@meta.data
+
+
+```
+
+#Add gDNA as an assay to the Seurat
+
+```{r}
+
+#load read data sets 
+
+gDNA_data_features_reads <- read.delim(paste0(path_dir_gDNA_reads, "/features.tsv.gz"), header = FALSE) %>% dplyr::pull(1)
+gDNA_data_features_reads <- sub("_chrom", "\\1", gDNA_data_features_reads)
+gDNA_data_barcodes_reads <- read.delim(paste0(path_dir_gDNA_reads,"/barcodes.tsv.gz"), header = FALSE) %>% dplyr::pull(1)
+gDNA_mat_reads <- readMM(paste0(path_dir_gDNA_reads,"/matrix.mtx.gz"))
+dimnames(gDNA_mat_reads) <- list(gDNA_data_features_reads, gDNA_data_barcodes_reads)
+
+#Get cells for subsetting
+to_subset <- metadata$cell
+valid_to_subset <- to_subset[to_subset %in% colnames(gDNA_mat_reads)]
+
+# Check if all elements in to_subset are valid column names in gDNA_mat_reads
+all(valid_to_subset %in% colnames(gDNA_mat_reads))
+
+#Subset matrix and convert to df
+gDNA_mat_reads_df <- gDNA_mat_reads[,valid_to_subset] %>% t() %>% as.data.frame()
+
+#Add missing cells and convert to matrix again for adding 
+#Make df of missing cells 
+missing_cells <- setdiff(to_subset, valid_to_subset)
+
+
+missing_cells_df <- matrix(0, nrow = length(missing_cells), ncol = length(colnames(gDNA_mat_reads_df)),
+                           dimnames = list(missing_cells, colnames(gDNA_mat_reads_df)))
+missing_cells_df <- as.data.frame(missing_cells_df)
+
+#Combine the two dfs and brind in correct order 
+
+gDNA_mat_reads_df <- rbind(gDNA_mat_reads_df, missing_cells_df)
+gDNA_mat_reads_df <- gDNA_mat_reads_df[to_subset,]
+all.equal(metadata$cell, rownames(gDNA_mat_reads_df))
+
+gDNA_mat_reads_to_add <- gDNA_mat_reads_df %>% t()
+
+#Add assay for gDNA
+#Make assay
+gDNA_assay <- CreateAssay5Object(counts = as.sparse(gDNA_mat_reads_to_add))
+cDNA_data_Seurat[["gDNA"]] <- gDNA_assay
+
+metadata <- cDNA_data_Seurat@meta.data
+
+
+saveRDS(cDNA_data_Seurat, paste0(plot_save_dir,"/POP_Seurat_max_sbc_500reads_tot_cut.rds"))
+
+
+#Set plot order in metadata
+
+order <- c("PFA", "Glyoxal")
+metadata$Type <- factor(metadata$Type, levels = order)
+
+#Set colors for plotting 
+
+#group_colors <- c(PFA = "grey34", Glyoxal = "yellow2")
+group_colors <- c(PFA = "#003f5c", Glyoxal = "#ffa600")
+
+#Calculate percentages for plotting 
+
+
+metadata$nFeature_RNA_perc <- metadata$nFeature_RNA/30
+metadata$nFeature_gDNA_perc <- metadata$nFeature_gDNA/28
+
+
+```
+
+
+
+###Visualize number of cells
+
+```{r}
+
+title = "NCells_per_Type.pdf"
+p <- metadata %>%
+  	ggplot(aes(x=Type, fill=Type)) + 
+  	geom_bar() +
+  	theme_classic() +
+  	theme(axis.text.x = element_text(angle = 45, vjust = 1, hjust=1)) +
+    scale_y_continuous(limits = c(0,20000))+
+  	theme(plot.title = element_text(hjust=0.5, face="bold")) +
+  	ggtitle(title)+
+    labs(x = "Type", y = "Number of cells")+
+    scale_fill_manual(values = group_colors)+
+    guides(fill = "none")
+
+
+ggsave(filename = title, path = plot_save_dir, plot = p, device = "pdf", scale = 1,
+       width = 10, height = 15, units = "cm", dpi = 300)
+p
+
+```
+
+
+###Genes detected per cell - Violin
+
+```{r}
+
+title = "nGenes_Violin_perc.pdf"
+
+p <- metadata %>% 
+  	ggplot(aes(x=Type, y=nFeature_RNA_perc, fill=Type)) + 
+  geom_violin(alpha = 0.2, adjust = 3)+
+  geom_boxplot(width = 0.25)+
+  	theme_classic() +
+  	theme(axis.text.x = element_text(angle = 45, vjust = 1, hjust=1)) +
+  	theme(plot.title = element_text(hjust=0.5, face="bold")) +
+    scale_y_continuous(limits = c(0,1))+
+  	ggtitle(title)+
+      labs(x = "Type", y = "Genes per cell")+
+    scale_fill_manual(values = group_colors)+
+    guides(fill = "none")
+
+
+ggsave(filename = title, path = plot_save_dir, plot = p, device = "pdf", scale = 1,
+       width = 10, height = 15, units = "cm", dpi = 300)
+
+p
+
+```
+
+
+
+
+
+###Genes detected per cell - Density 
+
+```{r}
+
+title = "nGenes_Density_perc.pdf"
+
+p <- metadata %>% 
+  	ggplot(aes(color=Type, x=nFeature_RNA_perc, fill= Type)) + 
+  	geom_density(alpha = 0.2, adjust =3) + 
+  	theme_classic() +
+  	scale_x_continuous(limits = c(0, 1)) + 
+  	geom_vline(xintercept = 10)+
+  theme(plot.title = element_text(hjust=0.5, face="bold")) +
+  	ggtitle(title)+
+      labs(x = "Type", y = "Genes per cell")+
+    scale_fill_manual(values = group_colors)+
+      scale_color_manual(values = group_colors)+
+    guides(fill = "none", color = "none")
+
+ggsave(filename = title, path = plot_save_dir, plot = p, device = "pdf", scale = 1,
+       width = 10, height = 15, units = "cm", dpi = 300)
+
+
+p
+```
+
+###Amplicons detected per cell - Violin
+
+```{r}
+
+title = "nAmplicons_Violin_perc.pdf"
+
+p <- metadata %>% 
+  	ggplot(aes(x=Type, y=nFeature_gDNA_perc, fill=Type)) + 
+  geom_violin(alpha = 0.2, adjust = 3)+
+  geom_boxplot(width = 0.25)+
+  	theme_classic() +
+  	theme(axis.text.x = element_text(angle = 45, vjust = 1, hjust=1)) +
+  	theme(plot.title = element_text(hjust=0.5, face="bold")) +
+    scale_y_continuous(limits = c(0,1))+
+  	ggtitle(title)+
+      labs(x = "Type", y = "Amplicons per cell")+
+    scale_fill_manual(values = group_colors)+
+    guides(fill = "none")
+
+
+ggsave(filename = title, path = plot_save_dir, plot = p, device = "pdf", scale = 1,
+       width = 10, height = 15, units = "cm", dpi = 300)
+
+p
+
+```
+
+
+###Amplicons detected per cell - Density 
+
+```{r}
+
+title = "nAmplicons_Density_perc.pdf"
+
+p <- metadata %>% 
+  	ggplot(aes(color=Type, x=nFeature_gDNA_perc, fill= Type)) + 
+  	geom_density(alpha = 0.2, adjust =3) + 
+  	theme_classic() +
+  	scale_x_continuous(limits = c(0, 1)) + 
+  	geom_vline(xintercept = 10)+
+  theme(plot.title = element_text(hjust=0.5, face="bold")) +
+  	ggtitle(title)+
+      labs(x = "Type", y = "Genes per cell")+
+    scale_fill_manual(values = group_colors)+
+      scale_color_manual(values = group_colors)+
+    guides(fill = "none", color = "none")
+
+ggsave(filename = title, path = plot_save_dir, plot = p, device = "pdf", scale = 1,
+       width = 10, height = 15, units = "cm", dpi = 300)
+
+
+p
+```
+
+###UMIs detected per cell - Violin
+
+```{r}
+
+
+title = "nUMIs_Violin.pdf"
+
+p <- metadata %>% 
+  	ggplot(aes(x=Type, y=nCount_RNA, fill=Type)) + 
+  geom_violin(alpha = 0.2, adjust = 1)+
+  geom_boxplot(width = 0.25)+
+  	theme_classic() +
+  	theme(axis.text.x = element_text(angle = 45, vjust = 1, hjust=1)) +
+  	theme(plot.title = element_text(hjust=0.5, face="bold")) +
+    scale_y_continuous(limits = c(0,4500))+
+  	ggtitle(title)+
+      labs(x = "Type", y = "UMIs per cell (RNA)")+
+    scale_fill_manual(values = group_colors)+
+    guides(fill = "none")
+
+
+ggsave(filename = title, path = plot_save_dir, plot = p, device = "pdf", scale = 1,
+       width = 10, height = 15, units = "cm", dpi = 300)
+
+p
+
+```
+
+
+
+###UMIs detected per cell - Density
+
+```{r}
+
+title = "nUMIs_Density_perc.pdf"
+
+p <- metadata %>% 
+  	ggplot(aes(color=Type, x=nCount_RNA, fill= Type)) + 
+  	geom_density(alpha = 0.2, adjust =1) + 
+  	theme_classic() +
+  	scale_x_continuous(limits = c(0, 4500)) + 
+  	geom_vline(xintercept = 0)+
+  theme(plot.title = element_text(hjust=0.5, face="bold")) +
+  	ggtitle(title)+
+      labs(x = "Type", y = "UMIs per cell (RNA)")+
+    scale_fill_manual(values = group_colors)+
+      scale_color_manual(values = group_colors)+
+    guides(fill = "none", color = "none")
+
+ggsave(filename = title, path = plot_save_dir, plot = p, device = "pdf", scale = 1,
+       width = 10, height = 15, units = "cm", dpi = 300)
+
+
+p
+
+
+
+```
+
+
+###Reads - Amplicon detected per cell - Violin
+
+```{r}
+
+
+title = "nReads_gDNA_Violin.pdf"
+
+p <- metadata %>% 
+  	ggplot(aes(x=Type, y=nReads_gDNA, fill=Type)) + 
+  geom_violin(alpha = 0.2, adjust = 1)+
+  geom_boxplot(width = 0.25)+
+  	theme_classic() +
+  	theme(axis.text.x = element_text(angle = 45, vjust = 1, hjust=1)) +
+  	theme(plot.title = element_text(hjust=0.5, face="bold")) +
+    scale_y_continuous(limits = c(0,10000))+
+  	ggtitle(title)+
+      labs(x = "Type", y = "Reads per cell (Amplicons)")+
+    scale_fill_manual(values = group_colors)+
+    guides(fill = "none")
+
+
+ggsave(filename = title, path = plot_save_dir, plot = p, device = "pdf", scale = 1,
+       width = 10, height = 15, units = "cm", dpi = 300)
+
+p
+
+
+```
+
+
+###Reads - Amplicon detected per cell - Density
+
+```{r}
+
+
+title = "nAmplicons_Density_perc.pdf"
+
+p <- metadata %>% 
+  	ggplot(aes(color=Type, x=nReads_gDNA, fill= Type)) + 
+  	geom_density(alpha = 0.2, adjust =1) + 
+  	theme_classic() +
+  	scale_x_continuous(limits = c(0, 10000)) + 
+  	geom_vline(xintercept = 10)+
+  theme(plot.title = element_text(hjust=0.5, face="bold")) +
+  	ggtitle(title)+
+      labs(x = "Type", y = "Reads per cell (Amplicons)")+
+    scale_fill_manual(values = group_colors)+
+      scale_color_manual(values = group_colors)+
+    guides(fill = "none", color = "none")
+
+ggsave(filename = title, path = plot_save_dir, plot = p, device = "pdf", scale = 1,
+       width = 10, height = 15, units = "cm", dpi = 300)
+
+
+p
+
+
+
+```
+
+
+
+
+#Plot ratios of cell barcodes - sbc
+
+
+```{r}
+title = "cDNA_ratio_sbc.pdf"
+
+#Plot sample barcode ratio
+p <- metadata %>%
+ ggplot(aes(x=Type, y=cDNA_ratio_sbc, fill = Type))+
+  geom_violin(alpha = 0.2)+
+  geom_boxplot(width = 0.25)+
+  	theme_classic() +
+  	theme(axis.text.x = element_text(angle = 45, vjust = 1, hjust=1)) +
+  	theme(plot.title = element_text(hjust=0.5, face="bold")) +
+    scale_y_continuous(limits = c(0.5,1))+
+  	ggtitle(title)+
+      labs(x = "Type", y = "% of maximum sample barcode per cell")+
+    scale_fill_manual(values = group_colors)+
+    guides(fill = "none")
+
+p 
+
+ggsave(filename = title, path = plot_save_dir, plot = p, device = "pdf", scale = 1,
+       width = 10, height = 15, units = "cm", dpi = 300)
+
+
+
+```
+
+
+#Plot - gDNA
+
+```{r}
+
+title = "nCount_RNA-nReads_gDNA-nFeature_gDNA_perc_gDNA.pdf"
+p <- metadata %>% 
+  	ggplot(aes(x=nCount_RNA, y=nReads_gDNA, color=nFeature_gDNA_perc)) + 
+  	geom_point() + 
+	scale_colour_gradient(low = "gray90", high = "#990000", limits = c(0,1)) +
+  #xlim(c(0,30))+
+    #ylim(c(0,30))+
+  	scale_x_log10(limits = c(1,10000)) + 
+  	scale_y_log10(limits = c(1,10000)) + 
+  	theme_classic() +
+  	#geom_vline(xintercept = 10) +
+  	#geom_hline(yintercept = 10) +
+    	theme(plot.title = element_text(hjust=0.5, face="bold")) +
+  	ggtitle(title)+
+  	facet_wrap(~Type)
+
+p
+
+ggsave(filename = title, path = plot_save_dir, plot = p, device = "pdf", scale = 1,
+       width = 30, height = 15, units = "cm", dpi = 300)
+
+
+```
+
+
+
+
+
+#Plot - RNA
+
+```{r}
+
+title = "nCount_RNA-nReads_gDNA-nFeature_gDNA_perc_RNA.pdf"
+p <- metadata %>% 
+  	ggplot(aes(x=nCount_RNA, y=nReads_gDNA, color=nFeature_RNA_perc)) + 
+  	geom_point() + 
+	scale_colour_gradient(low = "gray90", high = "#990000", limits = c(0,1)) +
+  #xlim(c(0,30))+
+    #ylim(c(0,30))+
+  	scale_x_log10(limits = c(1,10000)) + 
+  	scale_y_log10(limits = c(1,10000)) + 
+  	theme_classic() +
+  	#geom_vline(xintercept = 10) +
+  	#geom_hline(yintercept = 10) +
+    	theme(plot.title = element_text(hjust=0.5, face="bold")) +
+  	ggtitle(title)+
+  	facet_wrap(~Type)
+
+p
+
+ggsave(filename = title, path = plot_save_dir, plot = p, device = "pdf", scale = 1,
+       width = 30, height = 15, units = "cm", dpi = 300)
+
+
+```
+
+
+
+#Plot - sbc
+
+```{r}
+
+title = "nCount_RNA-nReads_gDNA-nFeature_gDNA_perc_sbc.pdf"
+p <- metadata %>% 
+  	ggplot(aes(x=nCount_RNA, y=nReads_gDNA, color=cDNA_ratio_sbc)) + 
+  	geom_point() + 
+	scale_colour_gradient(low = "gray90", high = "#990000", limits = c(0,1)) +
+  #xlim(c(0,30))+
+    #ylim(c(0,30))+
+  	scale_x_log10(limits = c(1,10000)) + 
+  	scale_y_log10(limits = c(1,10000)) + 
+  	theme_classic() +
+  	#geom_vline(xintercept = 10) +
+  	#geom_hline(yintercept = 10) +
+    	theme(plot.title = element_text(hjust=0.5, face="bold")) +
+  	ggtitle(title)+
+  	facet_wrap(~Type)
+
+p
+
+ggsave(filename = title, path = plot_save_dir, plot = p, device = "pdf", scale = 1,
+       width = 30, height = 15, units = "cm", dpi = 300)
+
+
+```
+
+
+
+
+#Subset - remove cells without the highest cell barcode - select cells for sbc and CROP ratio and features
+
+```{r}
+
+cDNA_data_Seurat <- readRDS(paste0(plot_save_dir,"/POP_Seurat_max_sbc_500reads_tot_cut.rds"))
+
+#Subset for good cells
+cDNA_data_Seurat <- subset(x = cDNA_data_Seurat, subset = nFeature_RNA >= 12)
+cDNA_data_Seurat <- subset(x = cDNA_data_Seurat, subset = nFeature_gDNA >= 20)
+cDNA_data_Seurat <- subset(x = cDNA_data_Seurat, subset = nReads_gDNA >= 100)
+cDNA_data_Seurat <- subset(x = cDNA_data_Seurat, subset = nReads_RNA >= 500)
+cDNA_data_Seurat <- subset(x = cDNA_data_Seurat, subset = nCount_RNA >= 100) 
+cDNA_data_Seurat <- subset(x = cDNA_data_Seurat, subset = nCount_RNA <= 2500) 
+cDNA_data_Seurat <- subset(x = cDNA_data_Seurat, subset = cDNA_ratio_sbc >= 0.8)
+
+saveRDS(cDNA_data_Seurat, paste0(plot_save_dir,"/POP_Seurat_filtered.rds"))
+
+#cDNA_data_Seurat <- subset(x = cDNA_data_Seurat, subset = nCount_RNA >= 100)
+
+metadata <- cDNA_data_Seurat@meta.data
+metadata$cells <- rownames(metadata)
+
+avg_UMIs <- mean(metadata$nCount_RNA)
+
+#Set plot order in metadata
+
+order <- c("PFA", "Glyoxal")
+metadata$Type <- factor(metadata$Type, levels = order)
+
+#Set colors for plotting 
+
+#group_colors <- c(PFA = "grey34", Glyoxal = "yellow2")
+group_colors <- c(PFA = "#003f5c", Glyoxal = "#ffa600")
+
+#Calculate percentages for plotting 
+
+
+metadata$nFeature_RNA_perc <- metadata$nFeature_RNA/30
+metadata$nFeature_gDNA_perc <- metadata$nFeature_gDNA/28
+
+```
+
+
+
+
+###Visualize number of cells
+
+```{r}
+
+title = "NCells_per_Type_filtered.pdf"
+p <- metadata %>%
+  	ggplot(aes(x=Type, fill=Type)) + 
+  	geom_bar() +
+  	theme_classic() +
+  	theme(axis.text.x = element_text(angle = 45, vjust = 1, hjust=1)) +
+    scale_y_continuous(limits = c(0,5000))+
+  	theme(plot.title = element_text(hjust=0.5, face="bold")) +
+  	ggtitle(title)+
+    labs(x = "Type", y = "Number of cells")+
+    scale_fill_manual(values = group_colors)+
+    guides(fill = "none")
+
+
+ggsave(filename = title, path = plot_save_dir, plot = p, device = "pdf", scale = 1,
+       width = 7, height = 15, units = "cm", dpi = 300)
+p
+
+```
+
+
+
+###Genes detected per cell - Violin
+
+```{r}
+
+title = "nGenes_Violin_perc_filtered.pdf"
+
+p <- metadata %>% 
+  	ggplot(aes(x=Type, y=nFeature_RNA_perc, fill=Type)) + 
+  geom_violin(alpha = 0.2, adjust = 3)+
+  geom_boxplot(width = 0.25)+
+  	theme_classic() +
+  	theme(axis.text.x = element_text(angle = 45, vjust = 1, hjust=1)) +
+  	theme(plot.title = element_text(hjust=0.5, face="bold")) +
+    scale_y_continuous(limits = c(0,1))+
+  	ggtitle(title)+
+      labs(x = "Type", y = "Genes per cell")+
+    scale_fill_manual(values = group_colors)+
+    guides(fill = "none")
+
+
+
+
+ggsave(filename = title, path = plot_save_dir, plot = p, device = "pdf", scale = 1,
+       width = 10, height = 15, units = "cm", dpi = 300)
+
+p
+
+```
+
+
+
+
+###Genes detected per cell - Density 
+
+```{r}
+
+title = "nGenes_Density_perc_filtered.pdf"
+
+p <- metadata %>% 
+  	ggplot(aes(color=Type, x=nFeature_RNA_perc, fill= Type)) + 
+  	geom_density(alpha = 0.2, adjust =3) + 
+  	theme_classic() +
+  	scale_x_continuous(limits = c(0, 1)) + 
+  	geom_vline(xintercept = 10)+
+  theme(plot.title = element_text(hjust=0.5, face="bold")) +
+  	ggtitle(title)+
+      labs(x = "Type", y = "Genes per cell")+
+    scale_fill_manual(values = group_colors)+
+      scale_color_manual(values = group_colors)+
+    guides(fill = "none", color = "none")
+
+ggsave(filename = title, path = plot_save_dir, plot = p, device = "pdf", scale = 1,
+       width = 10, height = 15, units = "cm", dpi = 300)
+
+
+p
+```
+
+
+###Amplicons detected per cell - Violin
+
+```{r}
+
+title = "nAmplicons_Violin_perc_filtered.pdf"
+
+p <- metadata %>% 
+  	ggplot(aes(x=Type, y=nFeature_gDNA_perc, fill=Type)) + 
+  geom_violin(alpha = 0.2, adjust = 3)+
+  geom_boxplot(width = 0.25)+
+  	theme_classic() +
+  	theme(axis.text.x = element_text(angle = 45, vjust = 1, hjust=1)) +
+  	theme(plot.title = element_text(hjust=0.5, face="bold")) +
+    scale_y_continuous(limits = c(0,1))+
+  	ggtitle(title)+
+      labs(x = "Type", y = "Amplicons per cell")+
+    scale_fill_manual(values = group_colors)+
+    guides(fill = "none")
+
+
+ggsave(filename = title, path = plot_save_dir, plot = p, device = "pdf", scale = 1,
+       width = 10, height = 15, units = "cm", dpi = 300)
+
+p
+
+```
+
+
+###Amplicons detected per cell - Density 
+
+```{r}
+
+title = "nAmplicons_Density_perc_filtered.pdf"
+
+p <- metadata %>% 
+  	ggplot(aes(color=Type, x=nFeature_gDNA_perc, fill= Type)) + 
+  	geom_density(alpha = 0.2, adjust =3) + 
+  	theme_classic() +
+  	scale_x_continuous(limits = c(0, 1)) + 
+  	geom_vline(xintercept = 10)+
+  theme(plot.title = element_text(hjust=0.5, face="bold")) +
+  	ggtitle(title)+
+      labs(x = "Type", y = "Genes per cell")+
+    scale_fill_manual(values = group_colors)+
+      scale_color_manual(values = group_colors)+
+    guides(fill = "none", color = "none")
+
+ggsave(filename = title, path = plot_save_dir, plot = p, device = "pdf", scale = 1,
+       width = 10, height = 15, units = "cm", dpi = 300)
+
+
+p
+```
+
+
+###UMIs detected per cell - Violin
+
+```{r}
+
+
+title = "nUMIs_Violin_filtered.pdf"
+
+p <- metadata %>% 
+  	ggplot(aes(x=Type, y=nCount_RNA, fill=Type)) + 
+  geom_violin(alpha = 0.2, adjust = 1)+
+  geom_boxplot(width = 0.25)+
+  	theme_classic() +
+  	theme(axis.text.x = element_text(angle = 45, vjust = 1, hjust=1)) +
+  	theme(plot.title = element_text(hjust=0.5, face="bold")) +
+    scale_y_continuous(limits = c(0,3000))+
+  	ggtitle(title)+
+      labs(x = "Type", y = "UMIs per cell (RNA)")+
+    scale_fill_manual(values = group_colors)+
+    guides(fill = "none")
+
+
+ggsave(filename = title, path = plot_save_dir, plot = p, device = "pdf", scale = 1,
+       width = 10, height = 15, units = "cm", dpi = 300)
+
+p
+
+```
+
+
+
+###UMIs detected per cell - Density
+
+```{r}
+
+title = "nUMIs_Density_perc_filtered.pdf"
+
+p <- metadata %>% 
+  	ggplot(aes(color=Type, x=nCount_RNA, fill= Type)) + 
+  	geom_density(alpha = 0.2, adjust =1) + 
+  	theme_classic() +
+  	scale_x_continuous(limits = c(0, 3000)) + 
+  	geom_vline(xintercept = 0)+
+  theme(plot.title = element_text(hjust=0.5, face="bold")) +
+  	ggtitle(title)+
+      labs(x = "Type", y = "UMIs per cell (RNA)")+
+    scale_fill_manual(values = group_colors)+
+      scale_color_manual(values = group_colors)+
+    guides(fill = "none", color = "none")
+
+ggsave(filename = title, path = plot_save_dir, plot = p, device = "pdf", scale = 1,
+       width = 10, height = 15, units = "cm", dpi = 300)
+
+
+p
+
+
+
+```
+
+
+
+###Reads - Amplicon detected per cell - Violin
+
+```{r}
+
+
+title = "nReads_gDNA_Violin_filtered.pdf"
+
+p <- metadata %>% 
+  	ggplot(aes(x=Type, y=nReads_gDNA, fill=Type)) + 
+  geom_violin(alpha = 0.2, adjust = 1)+
+  geom_boxplot(width = 0.25)+
+  	theme_classic() +
+  	theme(axis.text.x = element_text(angle = 45, vjust = 1, hjust=1)) +
+  	theme(plot.title = element_text(hjust=0.5, face="bold")) +
+    scale_y_continuous(limits = c(0,10000))+
+  	ggtitle(title)+
+      labs(x = "Type", y = "Reads per cell (Amplicons)")+
+    scale_fill_manual(values = group_colors)+
+    guides(fill = "none")
+
+
+ggsave(filename = title, path = plot_save_dir, plot = p, device = "pdf", scale = 1,
+       width = 10, height = 15, units = "cm", dpi = 300)
+
+p
+
+
+```
+
+
+
+
+###Reads - Amplicon detected per cell - Density
+
+```{r}
+
+
+title = "nAmplicons_Density_perc_filtered.pdf"
+
+p <- metadata %>% 
+  	ggplot(aes(color=Type, x=nReads_gDNA, fill= Type)) + 
+  	geom_density(alpha = 0.2, adjust =1) + 
+  	theme_classic() +
+  	scale_x_continuous(limits = c(0, 10000)) + 
+  	geom_vline(xintercept = 10)+
+  theme(plot.title = element_text(hjust=0.5, face="bold")) +
+  	ggtitle(title)+
+      labs(x = "Type", y = "Reads per cell (Amplicons)")+
+    scale_fill_manual(values = group_colors)+
+      scale_color_manual(values = group_colors)+
+    guides(fill = "none", color = "none")
+
+ggsave(filename = title, path = plot_save_dir, plot = p, device = "pdf", scale = 1,
+       width = 10, height = 15, units = "cm", dpi = 300)
+
+
+p
+
+
+
+```
+
+
+
+
+#Plot ratios of cell barcodes - sbc
+
+
+```{r}
+title = "cDNA_ratio_sbc_filtered.pdf"
+
+#Plot sample barcode ratio
+p <- metadata %>%
+ ggplot(aes(x=Type, y=cDNA_ratio_sbc, fill = Type))+
+  geom_violin(alpha = 0.2)+
+  geom_boxplot(width = 0.25)+
+  	theme_classic() +
+  	theme(axis.text.x = element_text(angle = 45, vjust = 1, hjust=1)) +
+  	theme(plot.title = element_text(hjust=0.5, face="bold")) +
+    scale_y_continuous(limits = c(0.5,1))+
+  	ggtitle(title)+
+      labs(x = "Type", y = "% of maximum sample barcode per cell")+
+    scale_fill_manual(values = group_colors)+
+    guides(fill = "none")
+
+p 
+
+ggsave(filename = title, path = plot_save_dir, plot = p, device = "pdf", scale = 1,
+       width = 10, height = 15, units = "cm", dpi = 300)
+
+
+
+```
+
+
+
+
+#Plot - gDNA
+
+```{r}
+
+title = "nCount_RNA-nReads_gDNA-nFeature_gDNA_perc_gDNA_filtered.pdf"
+p <- metadata %>% 
+  	ggplot(aes(x=nCount_RNA, y=nReads_gDNA, color=nFeature_gDNA_perc)) + 
+  	geom_point() + 
+	scale_colour_gradient(low = "gray90", high = "#990000", limits = c(0,1)) +
+  #xlim(c(0,30))+
+    #ylim(c(0,30))+
+  	scale_x_log10(limits = c(1,10000)) + 
+  	scale_y_log10(limits = c(1,10000)) + 
+  	theme_classic() +
+  	#geom_vline(xintercept = 10) +
+  	#geom_hline(yintercept = 10) +
+    	theme(plot.title = element_text(hjust=0.5, face="bold")) +
+  	ggtitle(title)+
+  	facet_wrap(~Type)
+
+p
+
+ggsave(filename = title, path = plot_save_dir, plot = p, device = "pdf", scale = 1,
+       width = 30, height = 15, units = "cm", dpi = 300)
+
+
+```
+
+
+
+
+#Plot - RNA
+
+```{r}
+
+title = "nCount_RNA-nReads_gDNA-nFeature_gDNA_perc_RNA_filtered.pdf"
+p <- metadata %>% 
+  	ggplot(aes(x=nCount_RNA, y=nReads_gDNA, color=nFeature_RNA_perc)) + 
+  	geom_point() + 
+	scale_colour_gradient(low = "gray90", high = "#990000", limits = c(0,1)) +
+  #xlim(c(0,30))+
+    #ylim(c(0,30))+
+  	scale_x_log10(limits = c(1,10000)) + 
+  	scale_y_log10(limits = c(1,10000)) + 
+  	theme_classic() +
+  	#geom_vline(xintercept = 10) +
+  	#geom_hline(yintercept = 10) +
+    	theme(plot.title = element_text(hjust=0.5, face="bold")) +
+  	ggtitle(title)+
+  	facet_wrap(~Type)
+
+p
+
+ggsave(filename = title, path = plot_save_dir, plot = p, device = "pdf", scale = 1,
+       width = 30, height = 15, units = "cm", dpi = 300)
+
+
+```
+
+
+
+
+#Plot - sbc
+
+```{r}
+
+title = "nCount_RNA-nReads_gDNA-nFeature_gDNA_perc_sbc_filtered.pdf"
+p <- metadata %>% 
+  	ggplot(aes(x=nCount_RNA, y=nReads_gDNA, color=cDNA_ratio_sbc)) + 
+  	geom_point() + 
+	scale_colour_gradient(low = "gray90", high = "#990000", limits = c(0,1)) +
+  #xlim(c(0,30))+
+    #ylim(c(0,30))+
+  	scale_x_log10(limits = c(1,10000)) + 
+  	scale_y_log10(limits = c(1,10000)) + 
+  	theme_classic() +
+  	#geom_vline(xintercept = 10) +
+  	#geom_hline(yintercept = 10) +
+    	theme(plot.title = element_text(hjust=0.5, face="bold")) +
+  	ggtitle(title)+
+  	facet_wrap(~Type)
+
+p
+
+ggsave(filename = title, path = plot_save_dir, plot = p, device = "pdf", scale = 1,
+       width = 30, height = 15, units = "cm", dpi = 300)
+
+
+```
+
+
+
+
+
+
+###Normalize, Variable features, scale data, PCA, Find Neighbors, 
+
+```{r}
+
+#Normalize
+cDNA_data_Seurat <- NormalizeData(cDNA_data_Seurat, normalization.method = "LogNormalize", scale.factor = 10000)
+
+#Find Variable features
+cDNA_data_Seurat  <- FindVariableFeatures(cDNA_data_Seurat, selection.method = "vst", nfeatures = nrow(cDNA_data_Seurat@assays$RNA))
+
+#Scale data
+all.genes <- rownames(cDNA_data_Seurat)
+cDNA_data_Seurat <- ScaleData(cDNA_data_Seurat, features = all.genes)
+
+#Run PCA
+cDNA_data_Seurat <- RunPCA(cDNA_data_Seurat, features = all.genes)
+
+print(cDNA_data_Seurat[["pca"]], dims = 1:5, nfeatures = 5)
+VizDimLoadings(cDNA_data_Seurat, dims = 1:2, reduction = "pca")
+DimHeatmap(cDNA_data_Seurat, dims = 1:5, cells = 1000, balanced = TRUE)
+
+#Find Neighbors
+cDNA_data_Seurat <- FindNeighbors(cDNA_data_Seurat, dims = 1:10)
+
+#Find Clusters
+cDNA_data_Seurat  <- FindClusters(cDNA_data_Seurat, resolution = 0.06)
+
+#Run UMAP
+cDNA_data_Seurat <- RunUMAP(cDNA_data_Seurat, dims = 1:10)
+
+#Run tSNE
+cDNA_data_Seurat <- RunTSNE(cDNA_data_Seurat, dims = 1:10)
+
+saveRDS(cDNA_data_Seurat, paste0(plot_save_dir,"/POP_Seurat_filtered_clustered.rds"))
+
+cDNA_data_Seurat <- readRDS("POP_plots/POP_Seurat_filtered_clustered.rds")
+
+#Calculate average UMIs
+
+#Check average number of UMIs
+metadata <- cDNA_data_Seurat@meta.data 
+
+avg_UMIs <- mean(metadata$nCount_RNA)
+
+group_colors <- c(PFA = "#003f5c", Glyoxal = "#ffa600")
+
+```
+
+
+
+#Make general dimplots
+
+
+#Plot Dimplot with samples and clusters
+
+
+```{r, fig.width = 4, fig.height = 3}
+
+title = "POP_UMAP_Type.pdf"
+p <- DimPlot(cDNA_data_Seurat, group.by = "Type", cols = group_colors) + NoLegend()
+
+ggsave(filename = title, path = plot_save_dir, plot = p, device = "pdf", scale = 1,
+       width = 15, height = 15, units = "cm", dpi = 300)
+
+p
+
+
+title = "POP_UMAP_Cluster.pdf"
+
+p <- DimPlot(cDNA_data_Seurat, group.by = "seurat_clusters") + NoLegend()
+
+ggsave(filename = title, path = plot_save_dir, plot = p, device = "pdf", scale = 1,
+       width = 15, height = 15, units = "cm", dpi = 300)
+
+
+
+
+title = "POP_UMAP_nFeature_gDNA.pdf"
+
+p <- FeaturePlot(cDNA_data_Seurat, features = "nFeature_gDNA", cols = c("slategray2","firebrick2"), pt.size = 0.5, reduction = "umap")
+
+ggsave(filename = title, path = plot_save_dir, plot = p, device = "pdf", scale = 1,
+       width = 15, height = 15, units = "cm", dpi = 300)
+
+
+
+title = "POP_UMAP_nFeature_RNA.pdf"
+
+p <- FeaturePlot(cDNA_data_Seurat, features = "nFeature_RNA", cols = c("slategray2","firebrick2"), pt.size = 0.5, reduction = "umap")
+
+ggsave(filename = title, path = plot_save_dir, plot = p, device = "pdf", scale = 1,
+       width = 15, height = 15, units = "cm", dpi = 300)
+
+
+
+title = "POP_UMAP_nReads_gDNA.pdf"
+
+p <- FeaturePlot(cDNA_data_Seurat, features = "nReads_gDNA", cols = c("slategray2","firebrick2"), pt.size = 0.5, reduction = "umap", max.cutoff = 2000)
+
+ggsave(filename = title, path = plot_save_dir, plot = p, device = "pdf", scale = 1,
+       width = 15, height = 15, units = "cm", dpi = 300)
+
+
+title = "POP_UMAP_nCount_RNA.pdf"
+p <- FeaturePlot(cDNA_data_Seurat, features = "nCount_RNA", cols = c("slategray2","firebrick2"), pt.size = 0.5, reduction = "umap",
+                 max.cutoff = 2000)
+
+ggsave(filename = title, path = plot_save_dir, plot = p, device = "pdf", scale = 1,
+       width = 15, height = 15, units = "cm", dpi = 300)
+
+
+title = "POP_UMAP_nReads_RNA.pdf"
+p <- FeaturePlot(cDNA_data_Seurat, features = "nReads_RNA", cols = c("slategray2","firebrick2"), pt.size = 0.5, reduction = "umap",
+                 max.cutoff = 2000)
+
+ggsave(filename = title, path = plot_save_dir, plot = p, device = "pdf", scale = 1,
+       width = 15, height = 15, units = "cm", dpi = 300)
+
+
+title = "POP_UMAP_sbc_ratio.pdf"
+
+p <- FeaturePlot(cDNA_data_Seurat, features = "cDNA_ratio_sbc", cols = c("slategray2","firebrick2"), pt.size = 0.5, reduction = "umap")
+
+ggsave(filename = title, path = plot_save_dir, plot = p, device = "pdf", scale = 1,
+       width = 15, height = 15, units = "cm", dpi = 300)
+
+
+
+```
+
+
+#Make loop to plot genes found 
+
+```{r echo=TRUE, fig.dim= c(5, 5)}
+
+#set the destination directory for saving the plots
+
+
+all.genes <- rownames(cDNA_data_Seurat)
+
+plot_save_dir_loop <- "POP_plots/01_All_genes"
+
+#With legend
+for (i in 1:length(all.genes)){
+  gene.toplot <- all.genes[i]
+  p <- FeaturePlot(cDNA_data_Seurat, features = gene.toplot, reduction = "umap", cols = c("slategray2","firebrick2"), pt.size = 0.5, min.cutoff = 0) 
+  ggsave(paste(gene.toplot,"_umap.pdf",sep = ""), path = plot_save_dir_loop, plot = last_plot(), device = "pdf", scale = 1, width = 15, height = 15, units = "cm", dpi = 300)
+}
+
+
+plot_save_dir_loop <- "POP_plots/01_All_genes_no_legend"
+
+#no Legend
+for (i in 1:length(all.genes)){
+  gene.toplot <- all.genes[i]
+  p <- FeaturePlot(cDNA_data_Seurat, features = gene.toplot, reduction = "umap", cols = c("slategray2","firebrick2"), pt.size = 0.5, min.cutoff = 0) + NoLegend()
+  ggsave(paste(gene.toplot,"_umap.pdf",sep = ""), path = plot_save_dir_loop, plot = last_plot(), device = "pdf", scale = 1, width = 15, height = 15, units = "cm", dpi = 300)
+}
+
+
+
+
+```
+
+
+
+#Generate dotplots for gDNA and RNA
+
+
+#Dotplot - gDNA
+
+
+```{r}
+
+#Get DNA matrix and prepare df for plotting 
+
+
+gDNA_mat_df <- cDNA_data_Seurat@assays$gDNA$counts %>% t() %>% as.data.frame()
+all.equal(metadata$cell, rownames(gDNA_mat_df))
+gDNA_mat_df <-  cbind(Type = metadata$Type, 
+                      cell = metadata$cell, 
+                      gDNA_mat_df)
+
+gDNA_mat_df_reshape <- gDNA_mat_df %>% reshape2::melt(id.vars = c("Type", "cell"),
+                                                      variable.name = "ID", 
+                                                      value.name = "nReads_gDNA")
+
+nCells_Exp <- gDNA_mat_df_reshape %>% group_by(Type) %>% summarise(nCells = n_distinct(cell))
+
+gDNA_reads_aver_expr <- gDNA_mat_df_reshape %>% 
+  dplyr::group_by(ID, Type) %>% 
+  dplyr::summarize(avg_nReads = mean(nReads_gDNA),
+                   n_cells = sum(nReads_gDNA > 5), 
+                   .groups = "drop") %>% 
+    dplyr::left_join(nCells_Exp, by = "Type") %>%
+dplyr::mutate(avg_nReads_log1p = log1p(avg_nReads),
+                frac_cells = n_cells/nCells)
+
+
+#Make chromosomal sites for figure instead of amplicon names and join df
+
+gDNA_targets_annot <- read.delim("Other_data/02_gDNA_chrom_location/POP_amplicon_hg38_targets_add.txt")
+gDNA_targets_annot <- gDNA_targets_annot %>% mutate(ID2 = str_c(seqnames, ":", start, "-", end))
+
+to_add <- gDNA_targets_annot %>% select(ID = name, ID2)
+
+gDNA_reads_aver_expr <- gDNA_reads_aver_expr %>% left_join(to_add, by = "ID")
+
+
+
+
+order = c("PFA", "Glyoxal")
+gDNA_reads_aver_expr$Type <- factor(gDNA_reads_aver_expr$Type, levels = order)
+
+
+#Make dotplot
+max_plot <- max(gDNA_reads_aver_expr$avg_nReads_log1p)
+
+#sorted <- unique(gDNA_reads_aver_expr$ID[order(gDNA_reads_aver_expr$frac_cells)])
+
+sorted <- gDNA_reads_aver_expr %>% filter(Type == "PFA") %>% arrange(desc(frac_cells))
+
+gDNA_reads_aver_expr$ID2 <- factor(gDNA_reads_aver_expr$ID2, levels = sorted$ID2)
+
+title = "Dot_plot_gDNA_expression-fraction.pdf"
+
+
+pl1 <-  gDNA_reads_aver_expr  %>%
+  ggplot(aes(y = ID2,  x = factor(Type))) + 
+  geom_tile(aes(fill = avg_nReads_log1p)) +  
+  scale_fill_continuous(low = "white", high = "white")
+
+pl1
+
+
+
+pl2<- pl1  +   
+  geom_point(aes(color=avg_nReads_log1p, size = frac_cells)) +    
+  scale_colour_gradient(low = "grey", high = "#990000", limits = c(0,max_plot)) +  
+  #scale_colour_gradient2(low = "#990000", mid = "grey", high = "#336600", midpoint = 0, limits = c(0,3))+     
+  scale_size(breaks = c(0, 0.25, 0.5, 0.75, 1), range = c(0, 6), limits = c(0,1))+ 
+  theme_bw()
+
+pl2
+
+ggsave(filename = title, path = plot_save_dir, plot = pl2, device = "pdf", scale = 1,
+       width = 15, height = 18, units = "cm", dpi = 300)
+
+
+
+```
+
+
+#Dotplot - RNA
+
+
+```{r}
+
+#Get DNA matrix and prepare df for plotting 
+
+
+RNA_mat_df <- cDNA_data_Seurat@assays$RNA$counts %>% t() %>% as.data.frame()
+all.equal(metadata$cell, rownames(RNA_mat_df))
+RNA_mat_df <-  cbind(Type = metadata$Type, 
+                      cell = metadata$cell, 
+                      RNA_mat_df)
+
+RNA_mat_df_reshape <- RNA_mat_df %>% reshape2::melt(id.vars = c("Type", "cell"),
+                                                      variable.name = "ID", 
+                                                      value.name = "nUMIs_RNA")
+
+nCells_Exp <- RNA_mat_df_reshape %>% group_by(Type) %>% summarise(nCells = n_distinct(cell))
+
+RNA_reads_aver_expr <- RNA_mat_df_reshape %>% 
+  dplyr::group_by(ID, Type) %>% 
+  dplyr::summarize(avg_nUMIs = mean(nUMIs_RNA),
+                   n_cells = sum(nUMIs_RNA >= 1), 
+                   .groups = "drop") %>% 
+    dplyr::left_join(nCells_Exp, by = "Type") %>%
+dplyr::mutate(avg_nUMIs_log1p = log1p(avg_nUMIs),
+                frac_cells = n_cells/nCells)
+
+
+
+order = c("PFA", "Glyoxal")
+RNA_reads_aver_expr$Type <- factor(RNA_reads_aver_expr$Type, levels = order)
+
+
+#Make dotplot
+
+
+max_plot <- max(RNA_reads_aver_expr$avg_nUMIs_log1p)
+
+
+
+#sorted <- unique(gDNA_reads_aver_expr$ID[order(gDNA_reads_aver_expr$frac_cells)])
+
+sorted <- RNA_reads_aver_expr %>% filter(Type == "PFA") %>% arrange(desc(frac_cells))
+
+
+
+RNA_reads_aver_expr$ID <- factor(RNA_reads_aver_expr$ID, levels = sorted$ID)
+
+title = "Dot_plot_RNA_expression-fraction.pdf"
+
+
+pl1 <-  RNA_reads_aver_expr  %>%
+  ggplot(aes(y = ID,  x = factor(Type))) + 
+  geom_tile(aes(fill = avg_nUMIs_log1p)) +  
+  scale_fill_continuous(low = "white", high = "white")
+
+pl1
+
+
+
+pl2<- pl1  +   
+  geom_point(aes(color=avg_nUMIs_log1p, size = frac_cells)) +    
+  scale_colour_gradient(low = "grey", high = "#990000", limits = c(0,max_plot)) +  
+  #scale_colour_gradient2(low = "#990000", mid = "grey", high = "#336600", midpoint = 0, limits = c(0,3))+     
+  scale_size(breaks = c(0, 0.25, 0.5, 0.75, 1), range = c(0, 6), limits = c(0,1))+ 
+  theme_bw()
+
+pl2
+
+
+ggsave(filename = title, path = plot_save_dir, plot = pl2, device = "pdf", scale = 1,
+       width = 10, height = 18, units = "cm", dpi = 300)
+
+```
+
+
+
+
+### make more comparison plots - similar to SDR002
+
+#Make plots for gDNA
+
+```{r}
+#Get DNA matrix and prepare df for plotting 
+
+
+gDNA_mat_df <- cDNA_data_Seurat@assays$gDNA$counts %>% t() %>% as.data.frame()
+all.equal(metadata$cell, rownames(gDNA_mat_df))
+gDNA_mat_df <-  cbind(Type = metadata$Type, 
+                      cell = metadata$cell, 
+                      gDNA_mat_df)
+
+gDNA_mat_df_reshape <- gDNA_mat_df %>% reshape2::melt(id.vars = c("Type", "cell"),
+                                                      variable.name = "ID", 
+                                                      value.name = "nReads_gDNA")
+
+nCells_Exp <- gDNA_mat_df_reshape %>% group_by(Type) %>% summarise(nCells = n_distinct(cell))
+
+gDNA_reads_aver_expr <- gDNA_mat_df_reshape %>% 
+  dplyr::group_by(ID, Type) %>% 
+  dplyr::summarize(avg_nReads = mean(nReads_gDNA),
+                   n_cells = sum(nReads_gDNA > 5), 
+                   .groups = "drop") %>% 
+    dplyr::left_join(nCells_Exp, by = "Type") %>%
+dplyr::mutate(avg_nReads_log1p = log1p(avg_nReads),
+                frac_cells = n_cells/nCells)
+
+order = c("PFA", "Glyoxal")
+gDNA_reads_aver_expr$Type <- factor(gDNA_reads_aver_expr$Type, levels = order)
+
+check <- gDNA_reads_aver_expr %>% filter(Type == "Glyoxal")
+
+title = "gDNA_average_expression_vs_fract_cells_Exp_all.pdf"
+p <- gDNA_reads_aver_expr  %>%
+ggplot(aes(x = frac_cells, y = avg_nReads_log1p, color = Type)) +
+  geom_point(size = 7) +
+  labs(x = "% cells detected in", y = "avg_nReads_log1p") +
+  scale_y_continuous(limits = c(0, 6)) +
+  scale_x_continuous(labels = scales::percent, limits = c(0, 1)) +
+   geom_vline(xintercept = 0.8, linetype = "dashed") +
+  #scale_x_continuous(labels = scales::percent, limits = c(0,1)) +
+  theme_classic()+
+  ggtitle(title)+
+  facet_wrap(~Type)+
+      scale_color_manual(values = group_colors)+
+      guides(fill = FALSE, color = FALSE)
+
+
+
+ggsave(filename = title , path = plot_save_dir, plot = p, device = "pdf", scale = 1,
+       width = 30, height = 15, units = "cm", dpi = 300)
+
+p
+
+
+```
+
+
+#Make plot - foldchange - per target between panels
+
+
+```{r, fig.width = 10, fig.height = 4}
+
+
+gDNA_reads_aver_expr_fc <- gDNA_reads_aver_expr %>% 
+  arrange(Type, ID) %>%
+  group_by(ID) %>%
+  mutate(
+    avg_nReads_fc = log2(avg_nReads / dplyr::first(avg_nReads)),
+    frac_cells_fc = log2(frac_cells / dplyr::first(frac_cells))
+  ) %>%
+  filter(!if_any(everything(), ~is.na(.) | is.infinite(.))) %>%
+  ungroup()
+
+#Filter out Inf an NA
+
+
+
+
+title = "FC_gDNA_frac_cells-vs-FCS_gDNA_avg_nReads_commonn.pdf"
+p <- gDNA_reads_aver_expr_fc  %>%
+ggplot(aes(x = frac_cells_fc , y = avg_nReads_fc, color = Type)) +
+  geom_point(size = 7) +
+  labs(x = "FC_frac_cells", y =  "FC_avg_nReads") +
+  #scale_y_log10() +
+    scale_color_manual(values = group_colors )+
+  scale_y_continuous(limits = c(-2.5, 2.5))+
+  scale_x_continuous(limits = c(-2.5, 2.5)) +
+  geom_hline(yintercept = 0, linetype = "dashed") + 
+  geom_vline(xintercept = 0, linetype = "dashed") +
+  theme_classic()+
+  ggtitle(title)+
+  facet_wrap(~Type, ncol = 9)+
+    guides(fill = FALSE, color = FALSE)
+p
+
+
+ggsave(filename = title , path = plot_save_dir, plot = p, device = "pdf", scale = 1,
+       width = 30, height = 15, units = "cm", dpi = 300)
+
+p
+
+
+
+```
+
+
+
+#Make plot - foldchange - per target between panels - fc vs reads
+
+
+```{r, fig.width = 10, fig.height = 4}
+
+
+
+title = "FC_gDNA_frac_cells-vs-avg_nReads_log1p_commonn.pdf"
+p <- gDNA_reads_aver_expr_fc  %>%
+ggplot(aes(x = frac_cells_fc, y = avg_nReads_log1p , color = Type)) +
+  geom_point(size = 7) +
+  labs(x = "FC_frac_cells", y = "avg_nReads") +
+      scale_color_manual(values = group_colors )+
+  #scale_y_log10() +
+  scale_y_continuous(limits = c(0, 6))+
+  scale_x_continuous(limits = c(-2.5,2.5)) +
+  geom_hline(yintercept = 0, linetype = "dashed") + 
+  geom_vline(xintercept = 0, linetype = "dashed") +
+  theme_classic()+
+   facet_wrap(~Type, ncol = 3)+
+  ggtitle(title)+
+      guides(fill = FALSE, color = FALSE)
+
+p
+
+
+ggsave(filename = title , path = plot_save_dir, plot = p, device = "pdf", scale = 1,
+       width = 30, height = 15, units = "cm", dpi = 300)
+
+p
+
+
+
+```
+
+
+
+#Make plot - foldchange - per target between panels - fc vs reads
+
+
+```{r, fig.width = 10, fig.height = 4}
+
+
+
+title = "FC_gDNA_avg_nReads-vs-avg_nReads_log1p_commonn.pdf"
+p <- gDNA_reads_aver_expr_fc  %>%
+ggplot(aes(x = avg_nReads_fc, y =  avg_nReads_log1p, color = Type)) +
+  geom_point(size = 7) +
+  labs(x = "FC_avg_nReads", y = "avg_nReads") +
+      scale_color_manual(values = group_colors )+
+  #scale_y_log10() +
+  scale_y_continuous(limits = c(0, 6))+
+  scale_x_continuous(limits = c(-2.5,2.5)) +
+  geom_hline(yintercept = 0, linetype = "dashed") + 
+  geom_vline(xintercept = 0, linetype = "dashed") +
+  theme_classic()+
+   facet_wrap(~Type, ncol = 3)+
+  ggtitle(title)+
+      guides(fill = FALSE, color = FALSE)
+
+p
+
+
+ggsave(filename = title , path = plot_save_dir, plot = p, device = "pdf", scale = 1,
+       width = 30, height = 15, units = "cm", dpi = 300)
+
+p
+
+
+
+```
+
+
+
+
+#Dotplot - y frac_cells_fc - x - ID
+
+
+```{r, fig.width = 10, fig.height = 4}
+
+sorted <- gDNA_reads_aver_expr_fc %>% filter(Type == "PFA") %>% dplyr::arrange(desc(avg_nReads))
+
+gDNA_reads_aver_expr_fc$ID <- factor(gDNA_reads_aver_expr_fc$ID , levels = sorted$ID )
+
+title = "FC_gDNA_frac_cells-vs-avg_nReads_log1p_as_size_ordererd_commonn.pdf"
+p <- gDNA_reads_aver_expr_fc  %>%
+ggplot(aes(x = ID, y =  frac_cells_fc, color = Type, size = avg_nReads_log1p)) +
+  geom_point(alpha =0.4) +
+  scale_x_discrete(guide = guide_axis(angle = 90)) +
+  scale_y_continuous(limits = c(-2.5,2.5))+
+  labs(x = "ID", y = "FC_frac_cells") +
+  scale_color_manual(values = group_colors )+
+  #scale_y_log10() +
+  #scale_y_continuous(limits = c(0, 7))+
+  #scale_x_continuous(limits = c(-10,10)) +
+  #geom_hline(yintercept = 0, linetype = "dashed") + 
+  #geom_vline(xintercept = 0, linetype = "dashed") +
+  theme_classic()+
+  #  facet_wrap(~orig.ident, ncol = 9)+
+  ggtitle(title)
+
+
+
+
+ggsave(filename = title, path = plot_save_dir, plot = p, device = "pdf", scale = 1, width = 30, height = 15, units = "cm", dpi = 300)
+       
+
+p
+
+
+
+```
+
+
+
+#Dotplot - y frac_cells_fc - x - ID
+
+
+```{r, fig.width = 10, fig.height = 4}
+
+
+sorted <- gDNA_reads_aver_expr_fc %>% filter(Type == "PFA") %>% dplyr::arrange(desc(avg_nReads))
+gDNA_reads_aver_expr_fc$ID <- factor(gDNA_reads_aver_expr_fc$ID , levels = sorted$ID )
+
+
+
+title = "avg_nReads_log1p-vs-FC_gDNA_frac_cells_as_size_ordererd_commonn_.pdf"
+p <- gDNA_reads_aver_expr_fc  %>%
+ggplot(aes(x = ID, y =  avg_nReads_fc, color = Type, size = avg_nReads_log1p)) +
+  geom_point(alpha =0.4) +
+  scale_x_discrete(guide = guide_axis(angle = 90)) +
+  scale_y_continuous(limits = c(-2.5,2.5))+
+  labs(x = "ID", y = "FC_avg_Reads") +
+          scale_color_manual(values = group_colors )+
+  #scale_y_log10() +
+  #scale_y_continuous(limits = c(0, 7))+
+  #scale_x_continuous(limits = c(-10,10)) +
+  #geom_hline(yintercept = 0, linetype = "dashed") + 
+  #geom_vline(xintercept = 0, linetype = "dashed") +
+  theme_classic()+
+  #  facet_wrap(~orig.ident, ncol = 9)+
+  ggtitle(title)
+
+
+
+ggsave(filename = title, path = plot_save_dir, plot = p, device = "pdf", scale = 1,
+       width = 30, height = 15, units = "cm", dpi = 300)
+
+p
+
+
+
+```
+
+
+
+
+
+#Dotplot - Correlation of Expression SDR60_60 vs SDR120 and SDR240
+
+
+```{r, fig.width = 3, fig.height = 3}
+
+to_add <- gDNA_reads_aver_expr %>% dplyr::filter(Type == "PFA") %>% 
+                                  dplyr::select(ID, avg_nReads, frac_cells) %>%
+                                  dplyr::rename(avg_nReads_PFA = avg_nReads, frac_cells_PFA = frac_cells)
+
+
+gDNA_reads_aver_expr_cor <- gDNA_reads_aver_expr %>% 
+                           #dplyr::filter(orig.ident == "SDR002_120_120" | 
+                                 #        orig.ident == "SDR002_240_240") %>%
+                           dplyr::left_join(to_add, by = "ID") 
+                            
+cor_data <- gDNA_reads_aver_expr_cor %>%
+  group_by(Type) %>%
+  summarize(correlation = cor(avg_nReads_PFA, avg_nReads))
+
+gDNA_reads_aver_expr_cor <- gDNA_reads_aver_expr_cor %>% 
+                            filter(avg_nReads_PFA != 0)
+
+title = "Correlation_gDNA_avg_nReads_common.pdf"
+p <- gDNA_reads_aver_expr_cor  %>%
+ggplot(aes(x = avg_nReads_PFA, y =  avg_nReads, color = Type)) +
+  geom_point(size = 7) +
+  scale_color_manual(values = group_colors )+
+  #scale_x_discrete("") +
+  labs(x = "avg_nReads_PFA", y = "avg_nReads") +
+  scale_y_log10(limits = c(0.1, 1000)) +
+  scale_x_log10(limits = c(0.1, 1000)) +
+geom_smooth(method = "lm", se = FALSE, size = 1, aes(group = Type, color = Type)) +
+geom_text(data = cor_data, aes(label = sprintf("Correlation: %.2f", correlation)),
+            x = Inf, y = -Inf, hjust = 1, vjust = -2, size = 3, color = "black")+
+  theme_classic()+
+   #facet_wrap(~orig.ident, ncol = 9)+
+  ggtitle(title)+
+  guides(color = FALSE)
+  
+p
+
+ggsave(filename = title, path = plot_save_dir, plot = p, device = "pdf", scale = 1,width = 15, height = 15, units = "cm", dpi = 300)
+       
+
+```
+
+
+
+
+#Same plot with fraction of cells
+
+```{r, fig.width = 3, fig.height = 3}
+
+
+gDNA_reads_aver_expr_cor <- gDNA_reads_aver_expr %>% 
+                           #dplyr::filter(orig.ident == "SDR002_120_120" | 
+                                 #        orig.ident == "SDR002_240_240") %>%
+                           dplyr::left_join(to_add, by = "ID") 
+
+
+cor_data <- gDNA_reads_aver_expr_cor %>%
+  group_by(Type) %>%
+  summarize(correlation = cor(frac_cells_PFA, frac_cells))
+  
+
+
+
+title = "Correlation_gDNA_frac_cells_common.pdf"
+p <- gDNA_reads_aver_expr_cor  %>%
+ggplot(aes(x = frac_cells_PFA, y =  frac_cells, color = Type)) +
+  geom_point(size = 7) +
+  scale_color_manual(values = group_colors )+
+    scale_x_continuous(limits = c(0,1)) +
+    scale_y_continuous(limits = c(0,1)) +
+  #scale_x_discrete("") +
+  labs(x = "frac_cells_60", y = "frac_cells") +
+  #scale_y_log10() +
+  #scale_x_log10()+
+geom_smooth(method = "lm", se = FALSE, size = 1, aes(group = Type, color = Type)) +
+geom_text(data = cor_data, aes(label = sprintf("Correlation: %.2f", correlation)),
+            x = Inf, y = -Inf, hjust = 1, vjust = -2, size = 3, color = "black")+
+  theme_classic()+
+   #facet_wrap(~orig.ident, ncol = 9)+
+  ggtitle("Correlation_gDNA_frac_cells_common")+
+  guides(color = FALSE)
+  
+
+p
+
+ggsave(filename = title, path = plot_save_dir, plot = p, device = "pdf", scale = 1,width = 15, height = 15, units = "cm", dpi = 300)
+       
+
+
+```
+
+
+
+
+#Make same plots for RNA
+
+
+
+```{r}
+#Get DNA matrix and prepare df for plotting 
+
+RNA_mat_df <- cDNA_data_Seurat@assays$RNA$counts %>% t() %>% as.data.frame()
+all.equal(metadata$cell, rownames(RNA_mat_df))
+RNA_mat_df <-  cbind(Type = metadata$Type, 
+                      cell = metadata$cell, 
+                      RNA_mat_df)
+
+RNA_mat_df_reshape <- RNA_mat_df %>% reshape2::melt(id.vars = c("Type", "cell"),
+                                                      variable.name = "ID", 
+                                                      value.name = "nUMIs_RNA")
+
+nCells_Exp <- RNA_mat_df_reshape %>% group_by(Type) %>% summarise(nCells = n_distinct(cell))
+
+RNA_reads_aver_expr <- RNA_mat_df_reshape %>% 
+  dplyr::group_by(ID, Type) %>% 
+  dplyr::summarize(avg_nUMIs = mean(nUMIs_RNA),
+                   n_cells = sum(nUMIs_RNA >= 1), 
+                   .groups = "drop") %>% 
+    dplyr::left_join(nCells_Exp, by = "Type") %>%
+dplyr::mutate(avg_nUMIs_log1p = log1p(avg_nUMIs),
+                frac_cells = n_cells/nCells)
+
+order = c("PFA", "Glyoxal")
+RNA_reads_aver_expr$Type <- factor(RNA_reads_aver_expr$Type, levels = order)
+
+
+
+title = "RNA_average_expression_vs_fract_cells_Exp_all.pdf"
+p <- RNA_reads_aver_expr  %>%
+ggplot(aes(x = frac_cells, y = avg_nUMIs_log1p, color = Type)) +
+  geom_point(size = 7) +
+  labs(x = "% cells detected in", y = "avg_nUMIs_log1p") +
+  scale_y_continuous(limits = c(0, 6)) +
+  scale_x_continuous(labels = scales::percent, limits = c(0, 1)) +
+   geom_vline(xintercept = 0.8, linetype = "dashed") +
+  #scale_x_continuous(labels = scales::percent, limits = c(0,1)) +
+  theme_classic()+
+  ggtitle(title)+
+  facet_wrap(~Type)+
+      scale_color_manual(values = group_colors)+
+      guides(fill = FALSE, color = FALSE)
+
+
+
+ggsave(filename = title , path = plot_save_dir, plot = p, device = "pdf", scale = 1,
+       width = 30, height = 15, units = "cm", dpi = 300)
+
+p
+
+
+```
+
+
+
+
+#Make plot - foldchange - per target between panels
+
+
+```{r, fig.width = 10, fig.height = 4}
+
+
+RNA_reads_aver_expr_fc <- RNA_reads_aver_expr %>% 
+  arrange(Type, ID) %>%
+  group_by(ID) %>%
+  mutate(
+    avg_nUMIs_fc = log2(avg_nUMIs / dplyr::first(avg_nUMIs)),
+    frac_cells_fc = log2(frac_cells / dplyr::first(frac_cells))
+  ) %>%
+  filter(!if_any(everything(), ~is.na(.) | is.infinite(.))) %>%
+  ungroup()
+
+#Filter out Inf an NA
+
+
+
+
+title = "FC_RNA_frac_cells-vs-FCS_gDNA_avg_nUMIs_commonn.pdf"
+p <- RNA_reads_aver_expr_fc  %>%
+ggplot(aes(x = frac_cells_fc , y = avg_nUMIs_fc, color = Type)) +
+  geom_point(size = 7) +
+  labs(x = "FC_frac_cells" , y = "FC_avg_nUMIs") +
+  #scale_y_log10() +
+    scale_color_manual(values = group_colors )+
+  scale_y_continuous(limits = c(-2.5, 2.5))+
+  scale_x_continuous(limits = c(-2.5, 2.5)) +
+  geom_hline(yintercept = 0, linetype = "dashed") + 
+  geom_vline(xintercept = 0, linetype = "dashed") +
+  theme_classic()+
+  ggtitle(title)+
+  facet_wrap(~Type, ncol = 9)+
+    guides(fill = FALSE, color = FALSE)
+p
+
+
+ggsave(filename = title , path = plot_save_dir, plot = p, device = "pdf", scale = 1,
+       width = 30, height = 15, units = "cm", dpi = 300)
+
+p
+
+
+
+```
+
+
+
+
+#Make plot - foldchange - per target between panels - fc vs reads
+
+
+```{r, fig.width = 10, fig.height = 4}
+
+
+
+title = "FC_RNA_frac_cells-vs-avg_nReads_log1p_commonn.pdf"
+p <- RNA_reads_aver_expr_fc  %>%
+ggplot(aes(x = frac_cells_fc, y =  avg_nUMIs_log1p, color = Type)) +
+  geom_point(size = 7) +
+  labs(x = "FC_frac_cells", y = "avg_nUMIs") +
+      scale_color_manual(values = group_colors )+
+  #scale_y_log10() +
+  scale_y_continuous(limits = c(0, 6))+
+  scale_x_continuous(limits = c(-2.5,2.5)) +
+  geom_hline(yintercept = 0, linetype = "dashed") + 
+  geom_vline(xintercept = 0, linetype = "dashed") +
+  theme_classic()+
+   facet_wrap(~Type, ncol = 3)+
+  ggtitle(title)+
+      guides(fill = FALSE, color = FALSE)
+
+p
+
+
+ggsave(filename = title , path = plot_save_dir, plot = p, device = "pdf", scale = 1,
+       width = 30, height = 15, units = "cm", dpi = 300)
+
+p
+
+```
+
+
+
+#Make plot - foldchange - per target between panels - fc vs reads
+
+
+```{r, fig.width = 10, fig.height = 4}
+
+
+
+title = "FC_RNA_avg_nReads-vs-avg_nReads_log1p_commonn.pdf"
+p <- RNA_reads_aver_expr_fc  %>%
+ggplot(aes(x = avg_nUMIs_fc, y =  avg_nUMIs_log1p, color = Type)) +
+  geom_point(size = 7) +
+  labs(x = "FC_avg_nUMIs", y = "avg_nUMIs") +
+      scale_color_manual(values = group_colors )+
+  #scale_y_log10() +
+  scale_y_continuous(limits = c(0, 6))+
+  scale_x_continuous(limits = c(-2.5,2.5)) +
+  geom_hline(yintercept = 0, linetype = "dashed") + 
+  geom_vline(xintercept = 0, linetype = "dashed") +
+  theme_classic()+
+   facet_wrap(~Type, ncol = 3)+
+  ggtitle(title)+
+      guides(fill = FALSE, color = FALSE)
+
+p
+
+
+ggsave(filename = title , path = plot_save_dir, plot = p, device = "pdf", scale = 1,
+       width = 30, height = 15, units = "cm", dpi = 300)
+
+p
+
+
+
+```
+
+
+
+
+#Dotplot - y frac_cells_fc - x - ID
+
+
+```{r, fig.width = 10, fig.height = 4}
+
+sorted <- RNA_reads_aver_expr_fc %>% filter(Type == "PFA") %>% dplyr::arrange(desc(avg_nUMIs))
+RNA_reads_aver_expr_fc$ID <- factor(RNA_reads_aver_expr_fc$ID , levels = sorted$ID )
+
+title = "FC_RNA_frac_cells-vs-avg_UMIs_log1p_as_size_ordererd_commonn.pdf"
+p <- RNA_reads_aver_expr_fc  %>%
+ggplot(aes(x = ID, y =  frac_cells_fc, color = Type, size = avg_nUMIs_log1p)) +
+  geom_point(alpha =0.4) +
+  scale_x_discrete(guide = guide_axis(angle = 90)) +
+  scale_y_continuous(limits = c(-2.5,2.5))+
+  labs(x = "ID", y = "FC_frac_cells") +
+  scale_color_manual(values = group_colors )+
+  #scale_y_log10() +
+  #scale_y_continuous(limits = c(0, 7))+
+  #scale_x_continuous(limits = c(-10,10)) +
+  #geom_hline(yintercept = 0, linetype = "dashed") + 
+  #geom_vline(xintercept = 0, linetype = "dashed") +
+  theme_classic()+
+  #  facet_wrap(~orig.ident, ncol = 9)+
+  ggtitle(title)
+
+
+ggsave(filename = title, path = plot_save_dir, plot = p, device = "pdf", scale = 1, width = 30, height = 15, units = "cm", dpi = 300)
+       
+
+p
+
+```
+
+
+
+
+
+
+#Dotplot - y frac_cells_fc - x - ID
+
+
+```{r, fig.width = 10, fig.height = 4}
+
+
+sorted <- RNA_reads_aver_expr_fc %>% filter(Type == "PFA") %>% dplyr::arrange(desc(avg_nUMIs))
+RNA_reads_aver_expr_fc$ID <- factor(RNA_reads_aver_expr_fc$ID , levels = sorted$ID )
+
+
+
+title = "avg_nUMIs_log1p-vs-FC_RNA_frac_cells_as_size_ordererd_commonn_.pdf"
+p <- RNA_reads_aver_expr_fc  %>%
+ggplot(aes(x = ID, y =  avg_nUMIs_fc, color = Type, size = avg_nUMIs_log1p)) +
+  geom_point(alpha =0.4) +
+  scale_x_discrete(guide = guide_axis(angle = 90)) +
+  scale_y_continuous(limits = c(-2.5,2.5))+
+  labs(x = "ID", y = "FC_avg_Reads") +
+          scale_color_manual(values = group_colors )+
+  #scale_y_log10() +
+  #scale_y_continuous(limits = c(0, 7))+
+  #scale_x_continuous(limits = c(-10,10)) +
+  #geom_hline(yintercept = 0, linetype = "dashed") + 
+  #geom_vline(xintercept = 0, linetype = "dashed") +
+  theme_classic()+
+  #  facet_wrap(~orig.ident, ncol = 9)+
+  ggtitle(title)
+
+
+
+ggsave(filename = title, path = plot_save_dir, plot = p, device = "pdf", scale = 1,
+       width = 30, height = 15, units = "cm", dpi = 300)
+
+p
+
+
+
+```
+
+
+
+
+#Dotplot - Correlation of Expression SDR60_60 vs SDR120 and SDR240
+
+
+```{r, fig.width = 3, fig.height = 3}
+
+to_add <- RNA_reads_aver_expr %>% dplyr::filter(Type == "PFA") %>% 
+                                  dplyr::select(ID, avg_nUMIs, frac_cells) %>%
+                                  dplyr::rename(avg_nUMIs_PFA = avg_nUMIs, frac_cells_PFA = frac_cells)
+
+
+RNA_reads_aver_expr_cor <- RNA_reads_aver_expr %>% 
+                           #dplyr::filter(orig.ident == "SDR002_120_120" | 
+                                 #        orig.ident == "SDR002_240_240") %>%
+                           dplyr::left_join(to_add, by = "ID") 
+                            
+cor_data <- RNA_reads_aver_expr_cor %>%
+  group_by(Type) %>%
+  summarize(correlation = cor(avg_nUMIs_PFA, avg_nUMIs))
+
+#RNA_reads_aver_expr_cor <- RNA_reads_aver_expr_cor %>% 
+                            #filter(avg_nUMIs_PFA != 0)
+
+title = "Correlation_RNA_avg_nReads_common.pdf"
+p <- RNA_reads_aver_expr_cor  %>%
+ggplot(aes(x = avg_nUMIs_PFA, y =  avg_nUMIs, color = Type)) +
+  geom_point(size = 7) +
+  scale_color_manual(values = group_colors )+
+  #scale_x_discrete("") +
+  labs(x = "avg_nUMIs_PFA", y = "avg_nUMIs") +
+  scale_y_log10(limits = c(0.1, 1000)) +
+  scale_x_log10(limits = c(0.1, 1000)) +
+geom_smooth(method = "lm", se = FALSE, size = 1, aes(group = Type, color = Type)) +
+geom_text(data = cor_data, aes(label = sprintf("Correlation: %.2f", correlation)),
+            x = Inf, y = -Inf, hjust = 1, vjust = -2, size = 3, color = "black")+
+  theme_classic()+
+   #facet_wrap(~orig.ident, ncol = 9)+
+  ggtitle(title)+
+  guides(color = FALSE)
+  
+p
+
+ggsave(filename = title, path = plot_save_dir, plot = p, device = "pdf", scale = 1,width = 15, height = 15, units = "cm", dpi = 300)
+       
+
+```
+
+
+
+#Same plot with fraction of cells
+
+```{r, fig.width = 3, fig.height = 3}
+
+
+RNA_reads_aver_expr_cor <- RNA_reads_aver_expr %>% 
+                           #dplyr::filter(orig.ident == "SDR002_120_120" | 
+                                 #        orig.ident == "SDR002_240_240") %>%
+                           dplyr::left_join(to_add, by = "ID") 
+
+
+cor_data <- RNA_reads_aver_expr_cor %>%
+  group_by(Type) %>%
+  summarize(correlation = cor(frac_cells_PFA, frac_cells))
+  
+
+
+
+title = "Correlation_RNA_frac_cells_common.pdf"
+p <- RNA_reads_aver_expr_cor  %>%
+ggplot(aes(x = frac_cells_PFA, y =  frac_cells, color = Type)) +
+  geom_point(size = 7) +
+  scale_color_manual(values = group_colors )+
+    scale_x_continuous(limits = c(0,1)) +
+    scale_y_continuous(limits = c(0,1)) +
+  #scale_x_discrete("") +
+  labs(x = "frac_cells_60", y = "frac_cells") +
+  #scale_y_log10() +
+  #scale_x_log10()+
+geom_smooth(method = "lm", se = FALSE, size = 1, aes(group = Type, color = Type)) +
+geom_text(data = cor_data, aes(label = sprintf("Correlation: %.2f", correlation)),
+            x = Inf, y = -Inf, hjust = 1, vjust = -2, size = 3, color = "black")+
+  theme_classic()+
+   #facet_wrap(~orig.ident, ncol = 9)+
+  ggtitle("Correlation_gDNA_frac_cells_common")+
+  guides(color = FALSE)
+  
+
+p
+
+ggsave(filename = title, path = plot_save_dir, plot = p, device = "pdf", scale = 1,width = 15, height = 15, units = "cm", dpi = 300)
+       
+
+
+```
+
+
+
+### compare with bulk RNA-seq
+
+```{r}
+
+
+RNA_seq_iPSCs <- read.delim(here("Other_data/01_Bulk_RNA_seq_H9/RNA_seq_iPSCs_gene_list.txt"))
+RNA_seq_iPSCs <- read.delim(here("Other_data/01_Bulk_RNA_seq_H9/RNA_SEQ_H9_Phd.txt"))
+
+colSums(RNA_seq_iPSCs[,c(3:5)])
+
+
+#Filter for relevant genes
+
+all.genes <- rownames(cDNA_data_Seurat)
+
+RNA_seq_iPSCs <- RNA_seq_iPSCs %>% filter(X %in% all.genes)
+RNA_seq_iPSCs <- RNA_seq_iPSCs %>% mutate(Average = rowMeans(select(., 3:5), na.rm = TRUE))
+
+RNA_seq_iPSCs_average <- RNA_seq_iPSCs %>% select(Gene = X, Average)
+RNA_seq_iPSCs_average <- RNA_seq_iPSCs_average %>% mutate(Average_log1p = log1p(Average))
+
+
+RNA_mat_df <- cDNA_data_Seurat@assays$RNA$counts %>% t() %>% as.data.frame()
+
+all.equal(metadata$cell, rownames(RNA_mat_df))
+
+RNA_mat_df <-  cbind(Type = metadata$Type, 
+                      cell = metadata$cell, 
+                      RNA_mat_df)
+
+RNA_mat_df_reshape <- RNA_mat_df %>% reshape2::melt(id.vars = c("Type", "cell"),
+                                                      variable.name = "ID", 
+                                                      value.name = "nUMIs_RNA")
+
+nCells_Exp <- RNA_mat_df_reshape %>% group_by(Type) %>% summarise(nCells = n_distinct(cell))
+
+RNA_reads_aver_expr <- RNA_mat_df_reshape %>% 
+  dplyr::group_by(ID, Type) %>% 
+  dplyr::summarize(avg_nUMIs = mean(nUMIs_RNA),
+                   n_cells = sum(nUMIs_RNA >= 1), 
+                   .groups = "drop") %>% 
+    dplyr::left_join(nCells_Exp, by = "Type") %>%
+dplyr::mutate(avg_nUMIs_log1p = log1p(avg_nUMIs),
+                frac_cells = n_cells/nCells)
+
+
+RNA_bulk <- RNA_seq_iPSCs_average %>% select(ID = Gene, avg_nReads_bulk = Average)
+RNA_PFA <- RNA_reads_aver_expr %>% filter(Type == "PFA") %>% select(ID, avg_nUMIs_PFA = avg_nUMIs)
+RNA_Glyoxal <- RNA_reads_aver_expr %>% filter(Type == "Glyoxal") %>% select(ID, avg_nUMIs_Glyoxal = avg_nUMIs)
+
+RNA_to_plot <- RNA_bulk %>% left_join(RNA_PFA, by = "ID")
+RNA_to_plot <- RNA_to_plot %>% left_join(RNA_Glyoxal, by = "ID")
+rownames(RNA_to_plot) <- RNA_to_plot$ID
+RNA_to_plot <- RNA_to_plot %>% select(-ID)
+
+#Log1p transform
+
+RNA_to_plot_trans <- log1p(RNA_to_plot)
+
+
+#Set Breaks for dataset
+breaksList = seq(-2, 2, by = 0.1)
+#breaksList <- seq(min(RNA_seq_iPSCs), max(RNA_seq_iPSCs), length.out = 50)
+
+#Set colors for dataset
+myColor <- colorRampPalette(rev(brewer.pal(n = 7, name = "RdBu")))(length(breaksList))
+
+p <- pheatmap(RNA_to_plot_trans,
+                      cluster_cols = FALSE,
+                      cluster_rows = TRUE,
+                      scale = "column", 
+              color = myColor,
+           breaks = breaksList,
+             # cutree_rows = 3, 
+             #annotation_row = annotation_row_data_frame,
+              show_rownames = TRUE
+             
+             )
+
+p
+
+ggsave(filename = "Comparison_RNA-seq_Heatmap.pdf", path = plot_save_dir, plot = p, device = "pdf", scale = 1,
+       width = 15, height = 15, units = "cm", dpi = 300)
+
+
+```
+
+#Make correlation plot for comparison with RNA-seq
+
+
+```{r}
+
+#Use normalized reads here
+
+RNA_mat_df <- cDNA_data_Seurat@assays$RNA$counts %>% t() %>% as.data.frame()
+all.equal(metadata$cell, rownames(RNA_mat_df))
+
+RNA_mat_df <-  cbind(Type = metadata$Type, 
+                      cell = metadata$cell, 
+                      RNA_mat_df)
+
+RNA_mat_df_reshape <- RNA_mat_df %>% reshape2::melt(id.vars = c("Type", "cell"),
+                                                      variable.name = "ID", 
+                                                      value.name = "nUMIs_RNA")
+
+nCells_Exp <- RNA_mat_df_reshape %>% group_by(Type) %>% summarise(nCells = n_distinct(cell))
+
+RNA_reads_aver_expr <- RNA_mat_df_reshape %>% 
+  dplyr::group_by(ID, Type) %>% 
+  dplyr::summarize(avg_nUMIs = mean(nUMIs_RNA),
+                   n_cells = sum(nUMIs_RNA >= 1), 
+                   .groups = "drop") %>% 
+    dplyr::left_join(nCells_Exp, by = "Type") %>%
+dplyr::mutate(avg_nUMIs_log1p = log1p(avg_nUMIs),
+                frac_cells = n_cells/nCells)
+
+
+
+RNA_P_G <- RNA_reads_aver_expr %>% select(ID, avg_nUMIs, Type)
+RNA_bulk <- RNA_seq_iPSCs_average %>% select(ID = Gene, avg_nUMIs = Average) %>% mutate(Type = "Bulk")
+#RNA_bulk$avg_nUMIs <-  RNA_bulk$avg_nUMIs/100
+RNA_to_plot <- rbind(RNA_bulk, RNA_P_G)
+
+to_add <- RNA_bulk %>% dplyr::select(ID, avg_nUMIs_bulk = avg_nUMIs)
+
+RNA_to_plot <- RNA_to_plot %>% dplyr::left_join(to_add, by = "ID")
+
+
+cor_data <- RNA_to_plot %>%
+  group_by(Type) %>%
+  summarize(correlation = cor(avg_nUMIs_bulk, avg_nUMIs, use = "complete.obs", method = "pearson"))
+
+
+title = "Correlation_RNA_bulk_add_expression.pdf"
+p <- RNA_to_plot  %>%
+ggplot(aes(x = avg_nUMIs_bulk, y =  avg_nUMIs, color = Type)) +
+  geom_point(size = 7) +
+  scale_color_manual(values = group_colors )+
+  #scale_x_discrete("") +
+  labs(x = "avg_nUMIs_bulk", y = "avg_nUMIs") +
+  scale_y_log10(limits = c(0.1, 10000)) +
+  scale_x_log10(limits = c(0.1, 10000)) +
+geom_smooth(method = "lm", se = FALSE, size = 1, aes(group = Type, color = Type)) +
+geom_text(data = cor_data, aes(label = sprintf("Correlation: %.2f", correlation)),
+            x = Inf, y = -Inf, hjust = 1, vjust = -2, size = 3, color = "black")+
+  theme_classic()+
+   #facet_wrap(~orig.ident, ncol = 9)+
+  ggtitle(title)+
+  guides(color = FALSE)
+  
+
+p
+
+ggsave(filename = title, path = plot_save_dir, plot = p, device = "pdf", scale = 1,width = 15, height = 15, units = "cm", dpi = 300)
+
+
+
+
+
+
+
+
+       
+
+```
+
+
+

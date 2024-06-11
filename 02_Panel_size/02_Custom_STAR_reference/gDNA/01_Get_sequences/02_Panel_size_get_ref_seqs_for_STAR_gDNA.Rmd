@@ -1,0 +1,98 @@
+---
+title: "20231117_SDR005_get_ref_seqs_for_STAR"
+author: "Dominik Lindenhofer"
+date: "2023-11-17"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+## Load libs
+
+
+```{r}
+
+
+library(BSgenome)
+library(Biostrings)
+library(dplyr)
+library(stringr)
+library(GenomicRanges)
+
+
+```
+
+
+
+
+```{r}
+
+#Get seqs for V2 gDNA reference 
+
+
+#get sequences for gDNA targets
+SDR002_gDNA_amplicons_NOEG <- read.delim("Input/NOEG.csv/6169.amplicons", header = FALSE)
+
+
+colnames(SDR002_gDNA_amplicons_NOEG) <- c("Chromosome", "Start", "End", "ID")
+
+SDR002_gDNA_amplicons_OEG <- read.delim("Input/OEG/6170.amplicons", header = FALSE)
+colnames(SDR002_gDNA_amplicons_OEG) <- c("Chromosome", "Start", "End", "ID")
+
+SDR002_gDNA_amplicons <- rbind(SDR002_gDNA_amplicons_NOEG, SDR002_gDNA_amplicons_OEG)
+
+
+
+SDR002_gDNA_annot <- read.delim("Input/Panel_size_gDNA_targets_all.txt", header = FALSE)
+
+SDR002_gDNA_annot <- SDR002_gDNA_annot %>% mutate(ID = str_extract(V1, "AMPL\\d+")) %>% dplyr::rename(ID_full = V1)
+SDR002_gDNA_amplicons <- SDR002_gDNA_amplicons %>% left_join(SDR002_gDNA_annot, by = "ID")
+SDR002_gDNA_amplicons <- SDR002_gDNA_amplicons %>% filter(!is.na(ID_full))
+
+#Only keep columns that are not NA
+
+
+gDNA_targets_gr_1 <- makeGRangesFromDataFrame(SDR002_gDNA_amplicons, keep.extra.columns = TRUE)
+gDNA_targets_gr_2 <- makeGRangesFromDataFrame(SDR002_gDNA_amplicons, keep.extra.columns = TRUE)
+
+
+#Check if overlapping
+Overlap <- countOverlaps(gDNA_targets_gr_1, gDNA_targets_gr_2)
+gDNA_targets_gr_1$count_overlaps <- Overlap
+gDNA_targets_df_1 <- as.data.frame(gDNA_targets_gr_1)
+
+
+```
+
+
+
+
+```{r}
+# human genome BSgenome object (needs to be istalled from Bioconductor)
+hg38 <- getBSgenome("BSgenome.Hsapiens.UCSC.hg38")
+
+
+gDNA_targets <- SDR002_gDNA_amplicons 
+
+
+gDNA_targets_seq <- data.frame()
+
+for (i in unique(gDNA_targets$ID)){
+  gDNA_targets_i <- gDNA_targets %>% dplyr::filter(gDNA_targets$ID == i)
+  gDNA_targets_dna_i <- as.character(Biostrings::getSeq(hg38, gDNA_targets_i$Chromosome, gDNA_targets_i$Start,	gDNA_targets_i$End))
+  gDNA_targets_dna_i_df <- data.frame(ID = i, Chromosome = gDNA_targets_i$Chromosome, Start = gDNA_targets_i$Start, End = gDNA_targets_i$End,  Sequence = gDNA_targets_dna_i)
+  gDNA_targets_seq <- rbind(gDNA_targets_seq, gDNA_targets_dna_i_df)
+}
+
+
+to_write <- gDNA_targets_seq %>% left_join(SDR002_gDNA_annot, by = "ID")
+to_write <- to_write %>% select(ID = ID_full, Sequence)
+
+write.csv(to_write, file = "Input/SDR002_gDNA_targets-V2.csv", quote = FALSE, row.names = FALSE, col.names = TRUE, sep = "\t")
+
+
+```
+
+

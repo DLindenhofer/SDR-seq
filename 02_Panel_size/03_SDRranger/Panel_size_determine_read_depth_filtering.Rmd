@@ -1,0 +1,189 @@
+---
+title: "20231213_SDR002_determine_read_depth_filtering"
+output: html_document
+date: "2023-12-13"
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+## Load libs
+
+
+```{r}
+
+library(Seurat)
+library(dplyr)
+library(ggplot2)
+library(here)
+
+
+
+```
+
+## Load data
+
+
+```{r}
+
+
+plot_save_dir <- here("SDR002_determine_read_depth_filtering")
+
+
+
+SDR002_60 <- readRDS(here("SDR002_60_60_Plots/SDR002_60_60_Seurat_filtered.rds"))
+SDR002_60fail <- readRDS(here("SDR002_60_60fail_Plots/SDR002_60_60fail_Seurat_filtered.rds"))
+SDR002_120 <- readRDS(here("SDR002_120_120_Plots/SDR002_120_120_Seurat_filtered.rds"))
+SDR002_240 <- readRDS(here("SDR002_240_240_Plots/SDR002_240_240_Seurat_filtered.rds"))
+
+SDR002_60_meta <- SDR002_60@meta.data
+SDR002_60fail_meta <- SDR002_60fail@meta.data
+SDR002_120_meta <- SDR002_120@meta.data
+SDR002_240_meta <- SDR002_240@meta.data
+
+
+SDR002_meta <- rbind(SDR002_60_meta, SDR002_60fail_meta, SDR002_120_meta,  SDR002_240_meta)
+
+
+SDR002_meta$orig.ident <- factor(SDR002_meta$orig.ident, levels = c("SDR002_60_60", "SDR002_60_60fail", "SDR002_120_120", "SDR002_240_240"))
+
+group_colors <- c(SDR002_60_60 = "#EADFB4", SDR002_60_60fail = "#9BB0C1", SDR002_120_120 = "#51829B" , SDR002_240_240= "#F6995C") 
+                 
+
+
+
+```
+
+
+#Plot average number of reads per cell per Exp - nReads_gDNA
+
+```{r}
+
+title = "nReads_gDNA_avg.pdf"
+
+p <- SDR002_meta %>% 
+  	ggplot(aes(x=orig.ident, y=nReads_gDNA, fill= orig.ident)) + 
+  geom_violin(alpha = 0.2, adjust = 3)+
+  geom_boxplot(width = 0.25)+
+  	theme_classic() +
+  	theme(axis.text.x = element_text(angle = 45, vjust = 1, hjust=1)) +
+  	theme(plot.title = element_text(hjust=0.5, face="bold")) +
+    scale_y_continuous(limits = c(0,300000))+
+  	ggtitle(title)+
+      labs(x = "Experiment", y = "nReads_gDNA per cell")+
+    scale_fill_manual(values = group_colors)+
+    guides(fill = "none")
+
+
+ggsave(filename = title, path = plot_save_dir, plot = p, device = "pdf", scale = 1,
+       width = 10, height = 15, units = "cm", dpi = 300)
+
+p
+
+```
+
+
+
+#Plot average number of reads per cell per Exp - nReads_RNA
+
+```{r}
+
+title = "nReads_gRNA_avg.pdf"
+
+p <- SDR002_meta %>% 
+  	ggplot(aes(x=orig.ident, y=nReads_RNA, fill= orig.ident)) + 
+  geom_violin(alpha = 0.2, adjust = 3)+
+  geom_boxplot(width = 0.25)+
+  	theme_classic() +
+  	theme(axis.text.x = element_text(angle = 45, vjust = 1, hjust=1)) +
+  	theme(plot.title = element_text(hjust=0.5, face="bold")) +
+    scale_y_continuous(limits = c(0,300000))+
+  	ggtitle(title)+
+      labs(x = "Experiment", y = "nReads_RNA per cell")+
+    scale_fill_manual(values = group_colors)+
+    guides(fill = "none")
+
+
+ggsave(filename = title, path = plot_save_dir, plot = p, device = "pdf", scale = 1,
+       width = 10, height = 15, units = "cm", dpi = 300)
+
+p
+
+```
+
+
+#Calculate average number of reads
+
+```{r}
+
+
+
+SDR002_average <- SDR002_meta %>% 
+                  group_by(orig.ident) %>% 
+                  summarise(nReads_gDNA_average = mean(nReads_gDNA),
+                            nReads_RNA_average = mean(nReads_RNA),
+                            nReads_gDNA_sum = sum(nReads_gDNA),
+                            nReads_RNA_sum = sum(nReads_RNA),
+                            nCells = n()) %>% 
+                  mutate(panel_size = c(60, 60, 120, 240))
+
+write.csv(SDR002_average, file =paste0(plot_save_dir,"/SDR002_average.csv"), quote = FALSE, row.names = FALSE, col.names = TRUE)
+
+#Check file and determine read depth - scale to panel size 
+
+
+```
+
+
+#Determine cell barcodes to filter for - and write file
+
+
+```{r}
+
+#For cDNA
+SDR002_60_meta_cDNA_CB <- SDR002_60_meta %>% dplyr::select(cell_index)  %>% mutate(ID = "SDR002_60")
+write.table(SDR002_60_meta_cDNA_CB, file =paste0(plot_save_dir,"/SDR002_60_meta_cDNA_CB.txt"), quote = FALSE, row.names = FALSE, col.names = FALSE, sep = "\t")
+
+
+SDR002_60fail_meta_cDNA_CB <- SDR002_60fail_meta %>% dplyr::select(cell_index) %>% mutate(ID = "SDR002_60fail")
+write.table(SDR002_60fail_meta_cDNA_CB, file =paste0(plot_save_dir,"/SDR002_60fail_meta_cDNA_CB.txt"), quote = FALSE, row.names = FALSE, col.names = FALSE, sep = "\t")
+
+SDR002_120_meta_cDNA_CB <- SDR002_120_meta %>% dplyr::select(cell_index) %>% mutate(ID = "SDR002_120")
+write.table(SDR002_120_meta_cDNA_CB, file =paste0(plot_save_dir,"/SDR002_120_meta_cDNA_CB.txt"), quote = FALSE, row.names = FALSE, col.names = FALSE, sep = "\t")
+
+
+SDR002_240_meta_cDNA_CB <- SDR002_240_meta %>% dplyr::select(cell_index) %>% mutate(ID = "SDR002_240")
+write.table(SDR002_240_meta_cDNA_CB, file =paste0(plot_save_dir,"/SDR002_240_meta_cDNA_CB.txt"), quote = FALSE, row.names = FALSE, col.names = FALSE, sep = "\t")
+
+
+
+
+
+
+#For gDNA
+
+SDR002_60_meta_gDNA_CB <- SDR002_60_meta %>% dplyr::select(cell) %>% mutate(ID = "SDR002_60")
+write.table(SDR002_60_meta_gDNA_CB, file =paste0(plot_save_dir,"/SDR002_60_meta_gDNA_CB.txt"), quote = FALSE, row.names = FALSE, col.names = FALSE, sep = "\t")
+
+SDR002_60fail_meta_gDNA_CB <- SDR002_60fail_meta %>% dplyr::select(cell) %>% mutate(ID = "SDR002_60fail")
+write.table(SDR002_60fail_meta_gDNA_CB, file =paste0(plot_save_dir,"/SDR002_60fail_meta_gDNA_CB.txt"), quote = FALSE, row.names = FALSE, col.names = FALSE, sep = "\t")
+
+SDR002_120_meta_gDNA_CB <- SDR002_120_meta %>% dplyr::select(cell) %>% mutate(ID = "SDR002_120")
+write.table(SDR002_120_meta_gDNA_CB, file =paste0(plot_save_dir,"/SDR002_120_meta_gDNA_CB.txt"), quote = FALSE, row.names = FALSE, col.names = FALSE, sep = "\t")
+
+
+SDR002_240_meta_gDNA_CB <- SDR002_240_meta %>% dplyr::select(cell) %>% mutate(ID = "SDR002_240")
+write.table(SDR002_240_meta_gDNA_CB, file =paste0(plot_save_dir,"/SDR002_240_meta_gDNA_CB.txt"), quote = FALSE, row.names = FALSE, col.names = FALSE, sep = "\t")
+
+
+
+
+```
+
+
+
+
+
+
+

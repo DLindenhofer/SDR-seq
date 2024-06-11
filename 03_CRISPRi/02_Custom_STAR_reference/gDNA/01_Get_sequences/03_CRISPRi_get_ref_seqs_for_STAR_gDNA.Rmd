@@ -1,0 +1,109 @@
+---
+title: "20231117_SDR005_get_ref_seqs_for_STAR"
+author: "Dominik Lindenhofer"
+date: "2023-11-17"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+## Load libs
+
+
+```{r}
+
+
+library(BSgenome)
+library(Biostrings)
+library(dplyr)
+library(stringr)
+library(GenomicRanges)
+
+```
+
+
+
+
+```{r}
+
+#Get seqs for V2 gDNA reference
+#Do variant calling afterwards with GATK 
+
+
+amplicons_df <- read.delim("Input/03_CRISPRi_gDNA_targets.txt")
+amplicons_bed <- read.delim("Input/03_CRISPRi_gDNA_amplicons.bed", header = FALSE)
+colnames(amplicons_bed) <- c("Chromosome", "Start", "End", "ID")
+
+
+all.equal(amplicons_df$Start, amplicons_bed$Start)
+all.equal(amplicons_df$End, amplicons_bed$End)
+
+#Only keep columns that are not NA
+gDNA_targets_gr_1 <- makeGRangesFromDataFrame(amplicons_bed, keep.extra.columns = TRUE)
+gDNA_targets_gr_2 <- makeGRangesFromDataFrame(amplicons_bed, keep.extra.columns = TRUE)
+
+
+
+Overlap <- countOverlaps(gDNA_targets_gr_1, gDNA_targets_gr_2)
+gDNA_targets_gr_1$count_overlaps <- Overlap
+gDNA_targets_df_1 <- as.data.frame(gDNA_targets_gr_1)
+
+
+```
+
+
+
+
+```{r}
+# human genome BSgenome object (needs to be istalled from Bioconductor)
+hg38 <- getBSgenome("BSgenome.Hsapiens.UCSC.hg38")
+
+
+gDNA_targets <- amplicons_bed
+
+
+
+#Add 500 bp at each side 
+#gDNA_targets$Start <- gDNA_targets$Start-500
+#gDNA_targets$End <- gDNA_targets$End+500
+
+gDNA_targets_seq <- data.frame()
+
+for (i in unique(gDNA_targets$ID)){
+  gDNA_targets_i <- gDNA_targets %>% dplyr::filter(gDNA_targets$ID == i)
+  gDNA_targets_dna_i <- as.character(Biostrings::getSeq(hg38, gDNA_targets_i$Chromosome, gDNA_targets_i$Start,	gDNA_targets_i$End))
+  gDNA_targets_dna_i_df <- data.frame(ID = i, Chromosome = gDNA_targets_i$Chromosome, Start = gDNA_targets_i$Start, End = gDNA_targets_i$End,  Sequence = gDNA_targets_dna_i)
+  gDNA_targets_seq <- rbind(gDNA_targets_seq, gDNA_targets_dna_i_df)
+}
+
+
+to_write <- gDNA_targets_seq %>% dplyr::select(ID, Sequence)
+
+
+write.csv(to_write, file = "Input/03_CRISPRi_gDNA_targets-seq.csv", quote = FALSE, row.names = FALSE, col.names = TRUE, sep = "\t")
+
+
+```
+
+
+
+#Make annotation file to be used for other seurat later
+
+```{r}
+
+
+#Load file for annotation - from input for Mission Bio tapestri pipeline
+
+SDR001_annot <- read.delim("Input/03_CRISPRi_gDNA_targets_annotate.txt")
+SDR001_annot <- SDR001_annot %>% mutate(Start_Amp = 1, End_Amp = End-Start+1 )
+
+
+write.table(SDR001_annot, file = "Input/03_CRISPRi_gDNA_targets_annotate.txt", quote = FALSE, row.names = FALSE, col.names = TRUE, sep = "\t")
+
+
+```
+
+
+

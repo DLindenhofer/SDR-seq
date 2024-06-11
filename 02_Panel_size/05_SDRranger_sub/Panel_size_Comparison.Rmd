@@ -1,0 +1,2165 @@
+---
+title: '20230728_SDR002_Comparison'
+author: "Dominik Lindenhofer"
+date: "2023-07-28"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+
+```{r}
+library(Seurat)
+library(dplyr)
+library(Matrix)
+library(ggplot2)
+library(tidyverse)
+library(tidyr)
+library(dplyr)
+library(readr)
+library(scales)
+library(reshape2)
+library(here)
+
+```
+
+#Load data - gDNA
+```{r}
+
+plot_save_dir <- here("SDR002_Comparison_Plots")
+
+#Load data
+
+#Single cell data
+cDNA_data_Seurat_60 <- readRDS(here("SDR002_60_60_Plots/SDR002_60_60_Seurat.rds"))
+cDNA_data_Seurat_60fail <- readRDS(here("SDR002_60_60fail_Plots/SDR002_60_60fail_Seurat.rds"))
+cDNA_data_Seurat_120 <- readRDS(here("SDR002_120_120_Plots/SDR002_120_120_Seurat.rds"))
+cDNA_data_Seurat_240 <- readRDS(here("SDR002_240_240_Plots/SDR002_240_240_Seurat.rds"))
+
+#Ref lists for cDNA
+cDNA_60_60_targets <- read.delim("/Users/dominik.lindenhofer/Documents/Data_Local/202307_SDR002/SDR002_Refs_lists_R/SDR002_cDNA_60_60_targets-V2.txt", header = FALSE) %>% pull(1)
+cDNA_120_120_targets <- read.delim("/Users/dominik.lindenhofer/Documents/Data_Local/202307_SDR002/SDR002_Refs_lists_R/SDR002_cDNA_120_120_targets-V2.txt", header = FALSE) %>% pull(1)
+cDNA_240_240_targets <- read.delim("/Users/dominik.lindenhofer/Documents/Data_Local/202307_SDR002/SDR002_Refs_lists_R/SDR002_cDNA_240_240_targets-V2.txt", header = FALSE) %>% pull(1)
+
+
+
+
+#Ref lists for gDNA
+gDNA_60_60_targets <- read.delim("/Users/dominik.lindenhofer/Documents/Data_Local/202307_SDR002/SDR002_Refs_lists_R/SDR002_gDNA_60_60_targets.txt", header = FALSE) %>% pull(1)
+gDNA_60_60_targets <- gDNA_60_60_targets %>% str_replace_all("_", "-")
+
+gDNA_120_120_targets <- read.delim("/Users/dominik.lindenhofer/Documents/Data_Local/202307_SDR002/SDR002_Refs_lists_R/SDR002_gDNA_120_120_targets.txt", header = FALSE) %>% pull(1)
+gDNA_120_120_targets <- gDNA_120_120_targets %>% str_replace_all("_", "-")
+
+gDNA_240_240_targets <- read.delim("/Users/dominik.lindenhofer/Documents/Data_Local/202307_SDR002/SDR002_Refs_lists_R/SDR002_gDNA_240_240_targets.txt", header = FALSE) %>% pull(1)
+gDNA_240_240_targets <- gDNA_240_240_targets %>% str_replace_all("_", "-")
+
+
+#metadata <- cDNA_data_Seurat_60@meta.data
+
+#RNA
+#Subset RNA for targets in panel and add matrix back 
+
+#60
+
+RNA_mat <- cDNA_data_Seurat_60@assays$RNA$counts  %>% as.data.frame()
+RNA_mat <- RNA_mat[cDNA_60_60_targets,]
+RNA_mat_assay <- CreateAssay5Object(counts = as.sparse(RNA_mat))
+all.equal(colnames(RNA_mat), colnames(cDNA_data_Seurat_60))
+cDNA_data_Seurat_60[["RNA"]] <- RNA_mat_assay
+
+#60fail
+
+RNA_mat <- cDNA_data_Seurat_60fail@assays$RNA$counts  %>% as.data.frame()
+RNA_mat <- RNA_mat[cDNA_60_60_targets,]
+RNA_mat_assay <- CreateAssay5Object(counts = as.sparse(RNA_mat))
+all.equal(colnames(RNA_mat), colnames(cDNA_data_Seurat_60fail))
+cDNA_data_Seurat_60fail[["RNA"]] <- RNA_mat_assay
+
+#120
+
+RNA_mat <- cDNA_data_Seurat_120@assays$RNA$counts  %>% as.data.frame()
+RNA_mat <- RNA_mat[cDNA_120_120_targets,]
+RNA_mat_assay <- CreateAssay5Object(counts = as.sparse(RNA_mat))
+all.equal(colnames(RNA_mat), colnames(cDNA_data_Seurat_120))
+cDNA_data_Seurat_120[["RNA"]] <- RNA_mat_assay
+
+
+#240
+
+RNA_mat <- cDNA_data_Seurat_240@assays$RNA$counts  %>% as.data.frame()
+RNA_mat <- RNA_mat[cDNA_240_240_targets,]
+RNA_mat_assay <- CreateAssay5Object(counts = as.sparse(RNA_mat))
+all.equal(colnames(RNA_mat), colnames(cDNA_data_Seurat_240))
+cDNA_data_Seurat_240[["RNA"]] <- RNA_mat_assay
+
+
+
+
+#gDNA
+#Subset gDNA for targets in panel and add matrix back 
+
+#60
+gDNA_mat <- cDNA_data_Seurat_60@assays$gDNA$counts  %>% as.data.frame()
+gDNA_mat <- gDNA_mat[gDNA_60_60_targets,]
+gDNA_mat_assay <- CreateAssay5Object(counts = as.sparse(gDNA_mat))
+all.equal(colnames(gDNA_mat), colnames(cDNA_data_Seurat_60))
+cDNA_data_Seurat_60[["gDNA"]] <- gDNA_mat_assay
+
+
+
+#60fail
+gDNA_mat <- cDNA_data_Seurat_60fail@assays$gDNA$counts  %>% as.data.frame()
+gDNA_mat <- gDNA_mat[gDNA_60_60_targets,]
+gDNA_mat_assay <- CreateAssay5Object(counts = as.sparse(gDNA_mat))
+all.equal(colnames(gDNA_mat), colnames(cDNA_data_Seurat_60fail))
+cDNA_data_Seurat_60fail[["gDNA"]] <- gDNA_mat_assay
+
+#120
+gDNA_mat <- cDNA_data_Seurat_120@assays$gDNA$counts  %>% as.data.frame()
+gDNA_mat <- gDNA_mat[gDNA_120_120_targets,]
+gDNA_mat_assay <- CreateAssay5Object(counts = as.sparse(gDNA_mat))
+all.equal(colnames(gDNA_mat), colnames(cDNA_data_Seurat_120))
+cDNA_data_Seurat_120[["gDNA"]] <- gDNA_mat_assay
+
+
+#240
+gDNA_mat <- cDNA_data_Seurat_240@assays$gDNA$counts  %>% as.data.frame()
+gDNA_mat <- gDNA_mat[gDNA_240_240_targets,]
+gDNA_mat_assay <- CreateAssay5Object(counts = as.sparse(gDNA_mat))
+all.equal(colnames(gDNA_mat), colnames(cDNA_data_Seurat_240))
+cDNA_data_Seurat_240[["gDNA"]] <- gDNA_mat_assay
+
+
+
+#Make read_cutoff for covering a gDNA target - make new assay gDNA_cut
+
+
+#60
+gDNA_mat <- cDNA_data_Seurat_60@assays$gDNA$counts  %>% as.data.frame()
+gDNA_mat_cut <- gDNA_mat %>%   
+  mutate(across(everything(), ~ case_when(
+    . > 5 ~ .,
+    TRUE ~ 0)))
+gDNA_cut_assay <- CreateAssay5Object(counts = as.sparse(gDNA_mat_cut))
+cDNA_data_Seurat_60[["gDNA_cut"]] <- gDNA_cut_assay
+
+
+#60fail
+gDNA_mat <- cDNA_data_Seurat_60fail@assays$gDNA$counts  %>% as.data.frame()
+gDNA_mat_cut <- gDNA_mat %>%   
+  mutate(across(everything(), ~ case_when(
+    . > 5 ~ .,
+    TRUE ~ 0)))
+gDNA_cut_assay <- CreateAssay5Object(counts = as.sparse(gDNA_mat_cut))
+cDNA_data_Seurat_60fail[["gDNA_cut"]] <- gDNA_cut_assay
+
+
+#120
+gDNA_mat <- cDNA_data_Seurat_120@assays$gDNA$counts  %>% as.data.frame()
+gDNA_mat_cut <- gDNA_mat %>%   
+  mutate(across(everything(), ~ case_when(
+    . > 5 ~ .,
+    TRUE ~ 0)))
+gDNA_cut_assay <- CreateAssay5Object(counts = as.sparse(gDNA_mat_cut))
+cDNA_data_Seurat_120[["gDNA_cut"]] <- gDNA_cut_assay
+
+
+#240
+gDNA_mat <- cDNA_data_Seurat_240@assays$gDNA$counts  %>% as.data.frame()
+gDNA_mat_cut <- gDNA_mat %>%   
+  mutate(across(everything(), ~ case_when(
+    . > 5 ~ .,
+    TRUE ~ 0)))
+gDNA_cut_assay <- CreateAssay5Object(counts = as.sparse(gDNA_mat_cut))
+cDNA_data_Seurat_240[["gDNA_cut"]] <- gDNA_cut_assay
+
+
+
+
+#Save again
+
+saveRDS(cDNA_data_Seurat_60, file = here("SDR002_Comparison_Plots/SDR002_60_60_Seurat_mod.rds"))
+saveRDS(cDNA_data_Seurat_60fail, file = here("SDR002_Comparison_Plots/SDR002_60_60fail_Seurat_mod.rds"))
+saveRDS(cDNA_data_Seurat_120, file = here("SDR002_Comparison_Plots/SDR002_120_120_Seurat_mod.rds"))
+saveRDS(cDNA_data_Seurat_240, file = here("SDR002_Comparison_Plots/SDR002_240_240_Seurat_mod.rds"))
+
+
+
+cDNA_data_Seurat_60 <- readRDS("SDR002_Comparison_Plots/SDR002_60_60_Seurat_mod.rds")
+cDNA_data_Seurat_60fail <- readRDS("SDR002_Comparison_Plots/SDR002_60_60fail_Seurat_mod.rds")
+cDNA_data_Seurat_120 <- readRDS("SDR002_Comparison_Plots/SDR002_120_120_Seurat_mod.rds")
+cDNA_data_Seurat_240 <- readRDS("SDR002_Comparison_Plots/SDR002_240_240_Seurat_mod.rds")
+
+
+
+
+#Combine to one seurat object 
+cDNA_data_Seurat <- merge(cDNA_data_Seurat_60, y= c(cDNA_data_Seurat_60fail, cDNA_data_Seurat_120, cDNA_data_Seurat_240),
+                          add.cell.ids = c("60-1", "60-2", "120", "240"),
+                          project = "SDR002")
+
+
+
+metadata <- cDNA_data_Seurat@meta.data
+
+```
+
+
+#Get metadata and start plotting
+
+```{r}
+
+metadata <- cDNA_data_Seurat@meta.data
+
+metadata <- metadata %>% mutate(target_panel = case_when(orig.ident == "SDR002_60_60" ~ 60,
+                                  orig.ident == "SDR002_60_60fail" ~ 60,
+                                  orig.ident == "SDR002_120_120" ~ 120,
+                                  orig.ident == "SDR002_240_240" ~ 240))
+
+
+#add percentage 
+
+metadata <- metadata %>% mutate(nFeature_RNA_perc = nFeature_RNA/target_panel,
+                                nFeature_gDNA_cut_perc = nFeature_gDNA_cut/target_panel,)
+
+
+#Modify SDR002_60_60fail and rename to SDR002_60_60
+
+
+metadata <- metadata %>%
+  mutate(orig.ident = str_replace(orig.ident, "SDR002_60_60fail", "SDR002_60_60"))
+
+unique(metadata$orig.ident)
+
+#metadata$orig.ident <- sub("fail$", "", metadata$orig.ident)
+
+#check sum of reads and average reads per cell 
+
+metadata_avg_nReads_per_cell <- metadata %>% group_by(orig.ident) %>% summarize(avg_nReads_per_cell = mean(nReads_gDNA))
+
+#Set order for plotting 
+
+metadata$orig.ident <- factor(metadata$orig.ident, levels = c("SDR002_60_60", "SDR002_120_120", "SDR002_240_240"))
+
+
+group_colors <- c("SDR002_60_60" = "#003f5c", "SDR002_120_120" = "#bc5090", "SDR002_240_240" = "#ffa600" )
+
+```
+
+
+
+
+#Plot some general stats 
+
+Number of cells
+```{r}
+
+
+
+title = "NCells_per_Type.pdf"
+
+p <- metadata %>% 
+  	ggplot(aes(x=orig.ident,  fill = orig.ident)) + 
+  	geom_bar() +
+  	theme_classic() +
+  	theme(axis.text.x = element_text(angle = 45, vjust = 1, hjust=1)) +
+    scale_y_continuous(limits = c(0,10000))+
+  	theme(plot.title = element_text(hjust=0.5, face="bold")) +
+  	ggtitle(title)+
+    labs(x = "Type", y = "Number of cells")+
+    scale_fill_manual(values = group_colors)+
+    guides(fill = "none")
+
+
+ggsave(filename = title, path = plot_save_dir, plot = p, device = "pdf", scale = 1,
+       width = 10, height = 15, units = "cm", dpi = 300)
+p
+
+
+
+```
+
+
+
+###Genes detected per cell - Violin
+
+```{r}
+
+title = "nGenes_Violin_perc.pdf"
+
+p <- metadata %>% 
+  	ggplot(aes(x=orig.ident, y=nFeature_RNA_perc, fill=orig.ident)) + 
+  geom_violin(alpha = 0.2, adjust = 3)+
+  geom_boxplot(width = 0.25)+
+  	theme_classic() +
+  	theme(axis.text.x = element_text(angle = 45, vjust = 1, hjust=1)) +
+  	theme(plot.title = element_text(hjust=0.5, face="bold")) +
+    scale_y_continuous(limits = c(0,1))+
+  	ggtitle(title)+
+      labs(x = "Type", y = "Genes per cell")+
+    scale_fill_manual(values = group_colors)+
+    guides(fill = "none")
+
+
+
+
+ggsave(filename = title, path = plot_save_dir, plot = p, device = "pdf", scale = 1,
+       width = 10, height = 15, units = "cm", dpi = 300)
+
+p
+
+```
+
+
+
+
+###Genes detected per cell - Density 
+
+```{r}
+
+title = "nGenes_Density_perc.pdf"
+
+p <- metadata %>% 
+  	ggplot(aes(color=orig.ident, x=nFeature_RNA_perc, fill= orig.ident)) + 
+  	geom_density(alpha = 0.2, adjust =3) + 
+  	theme_classic() +
+  	scale_x_continuous(limits = c(0, 1)) + 
+  	geom_vline(xintercept = 10)+
+  theme(plot.title = element_text(hjust=0.5, face="bold")) +
+  	ggtitle(title)+
+      labs(x = "Type", y = "Genes per cell")+
+    scale_fill_manual(values = group_colors)+
+      scale_color_manual(values = group_colors)+
+    guides(fill = "none", color = "none")
+
+ggsave(filename = title, path = plot_save_dir, plot = p, device = "pdf", scale = 1,
+       width = 10, height = 15, units = "cm", dpi = 300)
+
+
+p
+```
+
+
+
+###Amplicons detected per cell - Violin
+
+```{r}
+
+title = "nAmplicons_Violin_perc.pdf"
+
+p <- metadata %>% 
+  	ggplot(aes(x=orig.ident, y=nFeature_gDNA_cut_perc, fill=orig.ident)) + 
+  geom_violin(alpha = 0.2, adjust = 3)+
+  geom_boxplot(width = 0.25)+
+  	theme_classic() +
+  	theme(axis.text.x = element_text(angle = 45, vjust = 1, hjust=1)) +
+  	theme(plot.title = element_text(hjust=0.5, face="bold")) +
+    scale_y_continuous(limits = c(0,1))+
+  	ggtitle(title)+
+      labs(x = "Type", y = "Amplicons per cell")+
+    scale_fill_manual(values = group_colors)+
+    guides(fill = "none")
+
+
+ggsave(filename = title, path = plot_save_dir, plot = p, device = "pdf", scale = 1,
+       width = 10, height = 15, units = "cm", dpi = 300)
+
+p
+
+```
+
+
+
+
+###Amplicons detected per cell - Density 
+
+```{r}
+
+title = "nAmplicons_Density_perc.pdf"
+
+p <- metadata %>% 
+  	ggplot(aes(color=orig.ident, x=nFeature_gDNA_cut_perc, fill= orig.ident)) + 
+  	geom_density(alpha = 0.2, adjust =3) + 
+  	theme_classic() +
+  	scale_x_continuous(limits = c(0, 1)) + 
+  	geom_vline(xintercept = 10)+
+  theme(plot.title = element_text(hjust=0.5, face="bold")) +
+  	ggtitle(title)+
+      labs(x = "Type", y = "Genes per cell")+
+    scale_fill_manual(values = group_colors)+
+      scale_color_manual(values = group_colors)+
+    guides(fill = "none", color = "none")
+
+ggsave(filename = title, path = plot_save_dir, plot = p, device = "pdf", scale = 1,
+       width = 10, height = 15, units = "cm", dpi = 300)
+
+
+p
+```
+
+
+
+###UMIs detected per cell - Violin
+
+```{r}
+
+
+title = "nUMIs_Violin.pdf"
+
+p <- metadata %>% 
+  	ggplot(aes(x=orig.ident, y=nCount_RNA, fill=orig.ident)) + 
+  geom_violin(alpha = 0.2, adjust = 1)+
+  geom_boxplot(width = 0.25)+
+  	theme_classic() +
+  	theme(axis.text.x = element_text(angle = 45, vjust = 1, hjust=1)) +
+  	theme(plot.title = element_text(hjust=0.5, face="bold")) +
+    scale_y_continuous(limits = c(0,40000))+
+  	ggtitle(title)+
+      labs(x = "Type", y = "UMIs per cell (RNA)")+
+    scale_fill_manual(values = group_colors)+
+    guides(fill = "none")
+
+
+ggsave(filename = title, path = plot_save_dir, plot = p, device = "pdf", scale = 1,
+       width = 10, height = 15, units = "cm", dpi = 300)
+
+p
+
+```
+
+
+
+###UMIs detected per cell - Density
+
+```{r}
+
+title = "nUMIs_Density_perc.pdf"
+
+p <- metadata %>% 
+  	ggplot(aes(color=orig.ident, x=nCount_RNA, fill= orig.ident)) + 
+  	geom_density(alpha = 0.2, adjust =1) + 
+  	theme_classic() +
+  	scale_x_continuous(limits = c(0, 40000)) + 
+  	geom_vline(xintercept = 0)+
+  theme(plot.title = element_text(hjust=0.5, face="bold")) +
+  	ggtitle(title)+
+      labs(x = "Type", y = "UMIs per cell (RNA)")+
+    scale_fill_manual(values = group_colors)+
+      scale_color_manual(values = group_colors)+
+    guides(fill = "none", color = "none")
+
+ggsave(filename = title, path = plot_save_dir, plot = p, device = "pdf", scale = 1,
+       width = 10, height = 15, units = "cm", dpi = 300)
+
+
+p
+
+
+
+```
+
+
+
+###Reads - Amplicon detected per cell - Violin
+
+```{r}
+
+
+title = "nReads_gDNA_Violin.pdf"
+
+p <- metadata %>% 
+  	ggplot(aes(x=orig.ident, y=nReads_gDNA, fill=orig.ident)) + 
+  geom_violin(alpha = 0.2, adjust = 1)+
+  geom_boxplot(width = 0.25)+
+  	theme_classic() +
+  	theme(axis.text.x = element_text(angle = 45, vjust = 1, hjust=1)) +
+  	theme(plot.title = element_text(hjust=0.5, face="bold")) +
+    scale_y_log10(limits = c(1,80000))+
+  	ggtitle(title)+
+      labs(x = "Type", y = "Reads per cell (Amplicons)")+
+    scale_fill_manual(values = group_colors)+
+    guides(fill = "none")
+
+
+ggsave(filename = title, path = plot_save_dir, plot = p, device = "pdf", scale = 1,
+       width = 10, height = 15, units = "cm", dpi = 300)
+
+p
+
+
+```
+
+
+
+###Reads - Amplicon detected per cell - Density
+
+```{r}
+
+
+title = "nReads_gDNA_Density_perc.pdf"
+
+p <- metadata %>% 
+  	ggplot(aes(color=orig.ident, x=nReads_gDNA, fill= orig.ident)) + 
+  	geom_density(alpha = 0.2, adjust =1) + 
+  	theme_classic() +
+  	scale_x_continuous(limits = c(0, 80000)) + 
+  	geom_vline(xintercept = 10)+
+  theme(plot.title = element_text(hjust=0.5, face="bold")) +
+  	ggtitle(title)+
+      labs(x = "Type", y = "Reads per cell (Amplicons)")+
+    scale_fill_manual(values = group_colors)+
+      scale_color_manual(values = group_colors)+
+    guides(fill = "none", color = "none")
+
+ggsave(filename = title, path = plot_save_dir, plot = p, device = "pdf", scale = 1,
+       width = 10, height = 15, units = "cm", dpi = 300)
+
+
+p
+
+
+
+```
+
+
+
+
+###Reads - RNA detected per cell - Violin
+
+```{r}
+
+
+title = "nReads_RNA_Violin.pdf"
+
+p <- metadata %>% 
+  	ggplot(aes(x=orig.ident, y=nReads_RNA, fill=orig.ident)) + 
+  geom_violin(alpha = 0.2, adjust = 1)+
+  geom_boxplot(width = 0.25)+
+  	theme_classic() +
+  	theme(axis.text.x = element_text(angle = 45, vjust = 1, hjust=1)) +
+  	theme(plot.title = element_text(hjust=0.5, face="bold")) +
+    scale_y_log10(limits = c(1,200000))+
+  	ggtitle(title)+
+      labs(x = "Type", y = "Reads per cell (Amplicons)")+
+    scale_fill_manual(values = group_colors)+
+    guides(fill = "none")
+
+
+ggsave(filename = title, path = plot_save_dir, plot = p, device = "pdf", scale = 1,
+       width = 10, height = 15, units = "cm", dpi = 300)
+
+p
+
+
+```
+
+
+
+#Plot - gDNA
+
+```{r}
+
+title = "nCount_RNA-nReads_gDNA-nFeature_gDNA_perc_gDNA.pdf"
+p <- metadata %>% 
+  	ggplot(aes(x=nCount_RNA, y=nReads_gDNA, color=nFeature_gDNA_cut_perc)) + 
+  	geom_point() + 
+	scale_colour_gradient(low = "gray90", high = "#990000", limits = c(0,1)) +
+  #xlim(c(0,30))+
+    #ylim(c(0,30))+
+  	scale_x_log10(limits = c(10,100000)) + 
+  	scale_y_log10(limits = c(10,100000)) + 
+  	theme_classic() +
+  	#geom_vline(xintercept = 10) +
+  	#geom_hline(yintercept = 10) +
+    	theme(plot.title = element_text(hjust=0.5, face="bold")) +
+  	ggtitle(title)+
+    guides(fill = "none", color = "none")+
+  	facet_wrap(~orig.ident)
+
+p
+
+ggsave(filename = title, path = plot_save_dir, plot = p, device = "pdf", scale = 1,
+       width = 30, height = 15, units = "cm", dpi = 300)
+
+
+```
+
+
+
+#Plot - RNA
+
+```{r}
+
+title = "nCount_RNA-nReads_gDNA-nFeature_gDNA_perc_RNA.pdf"
+p <- metadata %>% 
+  	ggplot(aes(x=nCount_RNA, y=nReads_gDNA, color=nFeature_RNA_perc)) + 
+  	geom_point() + 
+	scale_colour_gradient(low = "gray90", high = "#990000", limits = c(0,1)) +
+  #xlim(c(0,30))+
+    #ylim(c(0,30))+
+  	scale_x_log10(limits = c(10,100000)) + 
+  	scale_y_log10(limits = c(10,100000)) + 
+  	theme_classic() +
+  	#geom_vline(xintercept = 10) +
+  	#geom_hline(yintercept = 10) +
+    	theme(plot.title = element_text(hjust=0.5, face="bold")) +
+  	ggtitle(title)+
+      guides(fill = "none", color = "none")+
+  	facet_wrap(~orig.ident)
+
+p
+
+ggsave(filename = title, path = plot_save_dir, plot = p, device = "pdf", scale = 1,
+       width = 30, height = 15, units = "cm", dpi = 300)
+
+
+```
+
+
+
+
+
+#Plot - sbc
+
+```{r}
+
+title = "nCount_RNA-nReads_gDNA-nFeature_gDNA_perc_sbc.pdf"
+p <- metadata %>% 
+  	ggplot(aes(x=nCount_RNA, y=nReads_gDNA, color=cDNA_ratio_sbc)) + 
+  	geom_point() + 
+	scale_colour_gradient(low = "gray90", high = "#990000", limits = c(0,1)) +
+  #xlim(c(0,30))+
+    #ylim(c(0,30))+
+  	scale_x_log10(limits = c(10,100000)) + 
+  	scale_y_log10(limits = c(10,100000)) + 
+  	theme_classic() +
+  	#geom_vline(xintercept = 10) +
+  	#geom_hline(yintercept = 10) +
+    	theme(plot.title = element_text(hjust=0.5, face="bold")) +
+  	ggtitle(title)+
+  	facet_wrap(~orig.ident)
+
+p
+
+ggsave(filename = title, path = plot_save_dir, plot = p, device = "pdf", scale = 1,
+       width = 30, height = 15, units = "cm", dpi = 300)
+
+
+```
+
+
+
+#Prepare data gDNA
+
+
+```{r}
+
+#Prepare data
+
+#60
+gDNA_mat_60 <- cDNA_data_Seurat@assays$gDNA_cut$counts.SDR002_60_60 %>% t() %>% as.data.frame()
+gDNA_mat_60 <- gDNA_mat_60 %>% mutate(Type = "SDR002_60_60", cell = rownames(gDNA_mat_60))
+gDNA_mat_60_res <- gDNA_mat_60 %>% reshape2::melt(id.vars = c("Type", "cell"),
+                                                      variable.name = "ID", 
+                                                      value.name = "nReads_gDNA")
+
+#60fail
+gDNA_mat_60f <- cDNA_data_Seurat@assays$gDNA_cut$counts.SDR002_60_60fail %>% t() %>% as.data.frame()
+gDNA_mat_60f <- gDNA_mat_60f %>% mutate(Type = "SDR002_60_60", cell = rownames(gDNA_mat_60f))
+gDNA_mat_60f_res <- gDNA_mat_60f %>% reshape2::melt(id.vars = c("Type", "cell"),
+                                                      variable.name = "ID", 
+                                                      value.name = "nReads_gDNA")
+
+#120
+gDNA_mat_120 <- cDNA_data_Seurat@assays$gDNA_cut$counts.SDR002_120_120 %>% t() %>% as.data.frame()
+gDNA_mat_120 <- gDNA_mat_120 %>% mutate(Type = "SDR002_120_120", cell = rownames(gDNA_mat_120))
+gDNA_mat_120_res <- gDNA_mat_120 %>% reshape2::melt(id.vars = c("Type", "cell"),
+                                                      variable.name = "ID", 
+                                                      value.name = "nReads_gDNA")
+
+#240
+gDNA_mat_240 <- cDNA_data_Seurat@assays$gDNA_cut$counts.SDR002_240_240 %>% t() %>% as.data.frame()
+gDNA_mat_240 <- gDNA_mat_240 %>% mutate(Type = "SDR002_240_240", cell = rownames(gDNA_mat_240))
+gDNA_mat_240_res <- gDNA_mat_240 %>% reshape2::melt(id.vars = c("Type", "cell"),
+                                                      variable.name = "ID", 
+                                                      value.name = "nReads_gDNA")
+
+
+
+gDNA_mat_res <- rbind(gDNA_mat_60_res, gDNA_mat_60f_res, gDNA_mat_120_res, gDNA_mat_240_res)
+
+
+gDNA_mat_res <- gDNA_mat_res %>% 
+  mutate(EG_Class = case_when(grepl("NOEG", ID) ~ "NOEG", TRUE ~ "OEG"),
+      Chr_Class = case_when(
+    grepl("DNase-only", ID) ~ "DNase-only",
+    grepl("H3K4", ID) ~ "H3K4",
+    grepl("PLS", ID) ~ "PLS",
+    grepl("dELS", ID) ~ "dELS",
+    grepl("low-DNase", ID) ~ "low-DNase",
+    grepl("pELS", ID) ~ "pELS",
+    TRUE ~ NA_character_
+  ))
+
+
+
+nCells_Exp <- gDNA_mat_res %>% group_by(Type) %>% summarise(nCells = n_distinct(cell))
+
+
+#Make summary
+gDNA_reads_aver_expr <- gDNA_mat_res %>% 
+  dplyr::group_by(ID, Type) %>% 
+  dplyr::summarize(avg_nReads = mean(nReads_gDNA),
+                   n_cells = sum(nReads_gDNA > 5), 
+                   .groups = "drop") %>% 
+    dplyr::left_join(nCells_Exp, by = "Type") %>%
+dplyr::mutate(avg_nReads_log1p = log1p(avg_nReads),
+                frac_cells = n_cells/nCells) %>% 
+  mutate(EG_Class = case_when(grepl("NOEG", ID) ~ "NOEG", TRUE ~ "OEG"),
+      Chr_Class = case_when(
+    grepl("DNase-only", ID) ~ "DNase-only",
+    grepl("H3K4", ID) ~ "H3K4",
+    grepl("PLS", ID) ~ "PLS",
+    grepl("dELS", ID) ~ "dELS",
+    grepl("low-DNase", ID) ~ "low-DNase",
+    grepl("pELS", ID) ~ "pELS",
+    TRUE ~ NA_character_
+  ))
+
+
+#Set order for plotting
+gDNA_mat_res$Type <- factor(gDNA_mat_res$Type, levels = c("SDR002_60_60", "SDR002_120_120", "SDR002_240_240"))
+gDNA_reads_aver_expr$Type <- factor(gDNA_reads_aver_expr$Type, levels = c("SDR002_60_60", "SDR002_120_120", "SDR002_240_240"))
+
+
+#Only select common ones
+
+#Load target gene lists
+
+#Ref lists for gDNA
+gDNA_60_60_targets <- read.delim("/Users/dominik.lindenhofer/Documents/Data_Local/202307_SDR002/SDR002_Refs_lists_R/SDR002_gDNA_60_60_targets.txt", header = FALSE) %>% pull(1)
+gDNA_60_60_targets <- gDNA_60_60_targets %>% str_replace_all("_", "-")
+
+gDNA_120_120_targets <- read.delim("/Users/dominik.lindenhofer/Documents/Data_Local/202307_SDR002/SDR002_Refs_lists_R/SDR002_gDNA_120_120_targets.txt", header = FALSE) %>% pull(1)
+gDNA_120_120_targets <- gDNA_120_120_targets %>% str_replace_all("_", "-")
+
+gDNA_240_240_targets <- read.delim("/Users/dominik.lindenhofer/Documents/Data_Local/202307_SDR002/SDR002_Refs_lists_R/SDR002_gDNA_240_240_targets.txt", header = FALSE) %>% pull(1)
+gDNA_240_240_targets <- gDNA_240_240_targets %>% str_replace_all("_", "-")
+
+gDNA_targets_common <- intersect(gDNA_60_60_targets, gDNA_120_120_targets) 
+
+
+
+
+#Select only common ones
+
+gDNA_mat_res_common <- gDNA_mat_res %>% filter(ID %in% gDNA_targets_common)
+gDNA_reads_aver_expr_common <- gDNA_reads_aver_expr %>% filter(ID %in% gDNA_targets_common)
+
+
+#Add fold change
+gDNA_reads_aver_expr_common <- gDNA_reads_aver_expr_common %>% 
+  arrange(Type, ID) %>%
+  group_by(ID) %>%
+  mutate(
+    avg_nReads_fc = log2(avg_nReads / first(avg_nReads)),
+    frac_cells_fc = log2(frac_cells / first(frac_cells))
+  ) %>%
+  ungroup()
+
+
+#Count how many over 90 % 
+
+cut_off = 0.8
+
+gDNA_reads_aver_expr_count_cut <- gDNA_reads_aver_expr %>%
+  group_by(Type) %>%
+  summarise(count_over_cut = sum(frac_cells >= cut_off))                                            
+                                                                                    
+                                          
+
+
+
+```
+
+
+###Reads per cell (Amplicons) - Violin - common only 
+
+```{r}
+
+
+title = "nReads_gDNA_Violin_common.pdf"
+
+p <- gDNA_mat_res_common %>% 
+  	ggplot(aes(x=Type, y=nReads_gDNA, fill=Type)) + 
+  geom_violin(alpha = 0.2, adjust = 1)+
+  geom_boxplot(width = 0.25)+
+  	theme_classic() +
+  	theme(axis.text.x = element_text(angle = 45, vjust = 1, hjust=1)) +
+  	theme(plot.title = element_text(hjust=0.5, face="bold")) +
+    scale_y_log10(limits = c(1,80000))+
+  	ggtitle(title)+
+      labs(x = "Type", y = "Reads per cell (Amplicons)")+
+    scale_fill_manual(values = group_colors)+
+    guides(fill = "none")
+
+
+ggsave(filename = title, path = plot_save_dir, plot = p, device = "pdf", scale = 1,
+       width = 10, height = 15, units = "cm", dpi = 300)
+
+p
+
+
+```
+
+###Amplicons per cell (Amplicons) - Violin - common only 
+
+```{r}
+
+
+title = "nAmplicons_Violin_perc_common.pdf"
+
+p <- gDNA_mat_res_common %>%
+      group_by(Type, cell) %>%
+      dplyr::summarize(nFeature_gDNA_common = sum(nReads_gDNA > 5),                                     
+      .groups = "drop") %>%                                    
+        mutate(nFeature_gDNA_common_perc = nFeature_gDNA_common/60) %>%                                                            
+  	ggplot(aes(x=Type, y=nFeature_gDNA_common_perc, fill=Type)) + 
+  geom_violin(alpha = 0.2, adjust = 3)+
+  geom_boxplot(width = 0.25)+
+  	theme_classic() +
+  	theme(axis.text.x = element_text(angle = 45, vjust = 1, hjust=1)) +
+  	theme(plot.title = element_text(hjust=0.5, face="bold")) +
+    scale_y_continuous(limits = c(0,1))+
+  	ggtitle(title)+
+      labs(x = "Type", y = "Amplicons per cell")+
+    scale_fill_manual(values = group_colors)+
+    guides(fill = "none")
+
+
+ggsave(filename = title, path = plot_save_dir, plot = p, device = "pdf", scale = 1,
+       width = 10, height = 15, units = "cm", dpi = 300)
+
+p
+
+
+```
+
+
+
+
+#Prepare data RNA reads
+
+
+```{r}
+
+#Prepare data
+
+
+#60
+RNA_reads_mat_60 <- cDNA_data_Seurat@assays$RNA_reads$counts.SDR002_60_60 %>% t() %>% as.data.frame()
+RNA_reads_mat_60 <- RNA_reads_mat_60 %>% mutate(Type = "SDR002_60_60", cell = rownames(RNA_reads_mat_60))
+RNA_reads_mat_60_res <- RNA_reads_mat_60 %>% reshape2::melt(id.vars = c("Type", "cell"),
+                                                      variable.name = "ID", 
+                                                      value.name = "nReads_RNA_reads")
+
+#60fail
+RNA_reads_mat_60f <- cDNA_data_Seurat@assays$RNA_reads$counts.SDR002_60_60fail %>% t() %>% as.data.frame()
+RNA_reads_mat_60f <- RNA_reads_mat_60f %>% mutate(Type = "SDR002_60_60", cell = rownames(RNA_reads_mat_60f))
+RNA_reads_mat_60f_res <- RNA_reads_mat_60f %>% reshape2::melt(id.vars = c("Type", "cell"),
+                                                      variable.name = "ID", 
+                                                      value.name = "nReads_RNA_reads")
+
+#120
+RNA_reads_mat_120 <- cDNA_data_Seurat@assays$RNA_reads$counts.SDR002_120_120 %>% t() %>% as.data.frame()
+RNA_reads_mat_120 <- RNA_reads_mat_120 %>% mutate(Type = "SDR002_120_120", cell = rownames(RNA_reads_mat_120))
+RNA_reads_mat_120_res <- RNA_reads_mat_120 %>% reshape2::melt(id.vars = c("Type", "cell"),
+                                                      variable.name = "ID", 
+                                                      value.name = "nReads_RNA_reads")
+
+#240
+RNA_reads_mat_240 <- cDNA_data_Seurat@assays$RNA_reads$counts.SDR002_240_240 %>% t() %>% as.data.frame()
+RNA_reads_mat_240 <- RNA_reads_mat_240 %>% mutate(Type = "SDR002_240_240", cell = rownames(RNA_reads_mat_240))
+RNA_reads_mat_240_res <- RNA_reads_mat_240 %>% reshape2::melt(id.vars = c("Type", "cell"),
+                                                      variable.name = "ID", 
+                                                      value.name = "nReads_RNA_reads")
+
+
+
+RNA_reads_mat_res <- rbind(RNA_reads_mat_60_res, RNA_reads_mat_60f_res, RNA_reads_mat_120_res, RNA_reads_mat_240_res)
+
+
+RNA_reads_mat_res$Type <- factor(RNA_reads_mat_res$Type, levels = c("SDR002_60_60", "SDR002_120_120", "SDR002_240_240"))
+
+
+#Only select common ones
+
+#Load target gene lists
+
+#Ref lists common RNA targets
+#Load target gene lists
+
+
+cDNA_60_60_targets <- read.delim("/Users/dominik.lindenhofer/Documents/Data_Local/202307_SDR002/SDR002_Refs_lists_R/SDR002_cDNA_60_60_targets-V2.txt", header = FALSE) 
+cDNA_targets_common <- cDNA_60_60_targets %>% filter(V2 == "CA" | V2 == "C") %>% dplyr::pull(1)
+
+
+```
+
+
+
+###Reads per cell (RNA) - Violin - common only 
+
+```{r}
+
+
+title = "nReads_RNA_Violin_common.pdf"
+
+p <- RNA_reads_mat_res %>% 
+  filter(ID %in% cDNA_targets_common) %>% 
+  	ggplot(aes(x=Type, y=nReads_RNA_reads, fill=Type)) + 
+  geom_violin(alpha = 0.2, adjust = 1)+
+  geom_boxplot(width = 0.25)+
+  	theme_classic() +
+  	theme(axis.text.x = element_text(angle = 45, vjust = 1, hjust=1)) +
+  	theme(plot.title = element_text(hjust=0.5, face="bold")) +
+    scale_y_log10(limits = c(1,200000))+
+  	ggtitle(title)+
+      labs(x = "Type", y = "Reads per cell (Amplicons)")+
+    scale_fill_manual(values = group_colors)+
+    guides(fill = "none")
+
+
+ggsave(filename = title, path = plot_save_dir, plot = p, device = "pdf", scale = 1,
+       width = 10, height = 15, units = "cm", dpi = 300)
+
+p
+
+
+```
+
+#Prepare data RNA
+
+
+```{r}
+
+#Prepare data
+
+#60
+RNA_mat_60 <- cDNA_data_Seurat@assays$RNA$counts.SDR002_60_60 %>% t() %>% as.data.frame()
+RNA_mat_60 <- RNA_mat_60 %>% mutate(Type = "SDR002_60_60", cell = rownames(RNA_mat_60))
+RNA_mat_60_res <- RNA_mat_60 %>% reshape2::melt(id.vars = c("Type", "cell"),
+                                                      variable.name = "ID", 
+                                                      value.name = "nUMIs_RNA")
+
+#60fail
+RNA_mat_60f <- cDNA_data_Seurat@assays$RNA$counts.SDR002_60_60fail %>% t() %>% as.data.frame()
+RNA_mat_60f <- RNA_mat_60f %>% mutate(Type = "SDR002_60_60", cell = rownames(RNA_mat_60f))
+RNA_mat_60f_res <- RNA_mat_60f %>% reshape2::melt(id.vars = c("Type", "cell"),
+                                                      variable.name = "ID", 
+                                                      value.name = "nUMIs_RNA")
+
+#120
+RNA_mat_120 <- cDNA_data_Seurat@assays$RNA$counts.SDR002_120_120 %>% t() %>% as.data.frame()
+RNA_mat_120 <- RNA_mat_120 %>% mutate(Type = "SDR002_120_120", cell = rownames(RNA_mat_120))
+RNA_mat_120_res <- RNA_mat_120 %>% reshape2::melt(id.vars = c("Type", "cell"),
+                                                      variable.name = "ID", 
+                                                      value.name = "nUMIs_RNA")
+
+#240
+RNA_mat_240 <- cDNA_data_Seurat@assays$RNA$counts.SDR002_240_240 %>% t() %>% as.data.frame()
+RNA_mat_240 <- RNA_mat_240 %>% mutate(Type = "SDR002_240_240", cell = rownames(RNA_mat_240))
+RNA_mat_240_res <- RNA_mat_240 %>% reshape2::melt(id.vars = c("Type", "cell"),
+                                                      variable.name = "ID", 
+                                                      value.name = "nUMIs_RNA")
+
+
+
+RNA_mat_res <- rbind(RNA_mat_60_res, RNA_mat_60f_res, RNA_mat_120_res, RNA_mat_240_res)
+
+nCells_Exp <- RNA_mat_res %>% group_by(Type) %>% summarise(nCells = n_distinct(cell))
+
+
+#Make summary
+RNA_UMIs_aver_expr <- RNA_mat_res %>% 
+  dplyr::group_by(ID, Type) %>% 
+  dplyr::summarize(avg_nUMIs = mean(nUMIs_RNA),
+                   n_cells = sum(nUMIs_RNA > 0), 
+                   .groups = "drop") %>% 
+    dplyr::left_join(nCells_Exp, by = "Type") %>%
+dplyr::mutate(avg_nUMIs_log1p = log1p(avg_nUMIs),
+                frac_cells = n_cells/nCells) 
+
+RNA_mat_res$Type <- factor(RNA_mat_res$Type, levels = c("SDR002_60_60", "SDR002_120_120", "SDR002_240_240"))
+RNA_UMIs_aver_expr$Type <- factor(RNA_UMIs_aver_expr$Type, levels = c("SDR002_60_60", "SDR002_120_120", "SDR002_240_240"))
+
+
+#Only select common ones
+
+#Ref lists common RNA targets
+#Load target gene lists
+
+
+cDNA_60_60_targets <- read.delim("/Users/dominik.lindenhofer/Documents/Data_Local/202307_SDR002/SDR002_Refs_lists_R/SDR002_cDNA_60_60_targets-V2.txt", header = FALSE) 
+cDNA_120_120_targets <- read.delim("/Users/dominik.lindenhofer/Documents/Data_Local/202307_SDR002/SDR002_Refs_lists_R/SDR002_cDNA_120_120_targets-V2.txt", header = FALSE) 
+cDNA_240_240_targets <- read.delim("/Users/dominik.lindenhofer/Documents/Data_Local/202307_SDR002/SDR002_Refs_lists_R/SDR002_cDNA_240_240_targets-V2.txt", header = FALSE) 
+
+#Define common ones
+cDNA_targets_common <- cDNA_60_60_targets %>% filter(V2 == "CA" | V2 == "C") %>% dplyr::pull(1)
+
+#Combine list
+
+cDNA_targets <- rbind(cDNA_60_60_targets, cDNA_120_120_targets, cDNA_240_240_targets)
+colnames(cDNA_targets) <- c("ID", "Constant", "Expression_level")
+cDNA_targets <- unique(cDNA_targets) %>% select(ID, Expression_level)
+
+#Add expression level
+RNA_UMIs_aver_expr <- RNA_UMIs_aver_expr %>% left_join(cDNA_targets, by = "ID")
+
+
+#Select only common ones
+
+RNA_UMIs_aver_expr_common <- RNA_UMIs_aver_expr %>% filter(ID %in% cDNA_targets_common)
+
+
+RNA_mat_res_common <- RNA_mat_res %>% filter(ID %in% cDNA_targets_common)
+
+#Make fold change
+RNA_UMIs_aver_expr_common <- RNA_UMIs_aver_expr_common %>% 
+  arrange(Type, ID) %>%
+  group_by(ID) %>%
+  mutate(
+    avg_nUMIs_fc = log2(avg_nUMIs / first(avg_nUMIs)),
+    frac_cells_fc = log2(frac_cells / first(frac_cells))
+  ) %>%
+  ungroup()
+
+
+
+
+```
+
+
+###Genes per cell (Genes) - Violin - common only 
+
+```{r}
+
+
+title = "nGenes_Violin_perc_common.pdf"
+
+p <- RNA_mat_res_common  %>%
+      group_by(Type, cell) %>%
+      dplyr::summarize(nFeature_RNA_common = sum(nUMIs_RNA > 0),                                     
+      .groups = "drop") %>%                                    
+        mutate(nFeature_RNA_common_perc = nFeature_RNA_common/30) %>%                                                            
+  	ggplot(aes(x=Type, y=nFeature_RNA_common_perc, fill=Type)) + 
+  geom_violin(alpha = 0.2, adjust = 3)+
+  geom_boxplot(width = 0.25)+
+  	theme_classic() +
+  	theme(axis.text.x = element_text(angle = 45, vjust = 1, hjust=1)) +
+  	theme(plot.title = element_text(hjust=0.5, face="bold")) +
+    scale_y_continuous(limits = c(0,1))+
+  	ggtitle(title)+
+      labs(x = "Type", y = "Amplicons per cell")+
+    scale_fill_manual(values = group_colors)+
+    guides(fill = "none")
+
+
+ggsave(filename = title, path = plot_save_dir, plot = p, device = "pdf", scale = 1,
+       width = 10, height = 15, units = "cm", dpi = 300)
+
+p
+
+
+```
+
+
+
+
+#Plots gDNA
+
+#Plot fraction of cells vs expression - Dotplot - all targets
+
+```{r, fig.width = 6, fig.height = 4}
+
+
+title = "gDNA_average_expression_vs_fract_cells_Exp_all.pdf"
+p <- gDNA_reads_aver_expr  %>%
+ggplot(aes(x = frac_cells, y = avg_nReads_log1p, color = Type)) +
+  geom_point(size = 6) +
+  labs(x = "% cells detected in", y = "avg_nReads_log1p") +
+  scale_y_continuous(limits = c(0, 7)) +
+  scale_x_continuous(labels = scales::percent, limits = c(0, 1)) +
+   geom_vline(xintercept = 0.8, linetype = "dashed") +
+  #scale_x_continuous(labels = scales::percent, limits = c(0,1)) +
+  theme_classic()+
+  ggtitle(title)+
+  facet_wrap(~Type)+
+      scale_color_manual(values = group_colors)+
+      guides(fill = FALSE, color = FALSE)
+
+
+
+ggsave(filename = title , path = plot_save_dir, plot = p, device = "pdf", scale = 1,
+       width = 30, height = 15, units = "cm", dpi = 300)
+
+p
+
+```
+
+
+
+#Plot fraction of cells vs expression - Dotplot - common targets
+
+```{r, fig.width = 6, fig.height = 4}
+
+
+title = "gDNA_average_expression_vs_fract_cells_Exp_common.pdf"
+p <- gDNA_reads_aver_expr_common  %>%
+ggplot(aes(x = frac_cells, y = avg_nReads_log1p, color = Type)) +
+  geom_point(size = 6) +
+  labs(x = "% cells detected in", y = "avg_nReads_log1p") +
+  scale_y_continuous(limits = c(0, 7)) +
+  scale_x_continuous(labels = scales::percent, limits = c(0, 1)) +
+   geom_vline(xintercept = 0.8, linetype = "dashed") +
+  #scale_x_continuous(labels = scales::percent, limits = c(0,1)) +
+  theme_classic()+
+  ggtitle(title)+
+  facet_wrap(~Type)+
+      scale_color_manual(values = group_colors)+
+      guides(fill = FALSE, color = FALSE)
+
+
+
+ggsave(filename = title , path = plot_save_dir, plot = p, device = "pdf", scale = 1,
+       width = 30, height = 15, units = "cm", dpi = 300)
+
+p
+
+```
+
+
+
+
+#Make size dotplot - fraction vs expression - common
+
+```{r, fig.width = 6, fig.height = 14}
+
+#Find max for plot
+max_plot <- max(gDNA_reads_aver_expr_common$avg_nReads_log1p)
+
+#Set order for plot
+sorted <- gDNA_reads_aver_expr_common %>% filter(Type == "SDR002_60_60") %>% arrange(desc(frac_cells))
+gDNA_reads_aver_expr_common$ID <- factor(gDNA_reads_aver_expr_common$ID, levels = sorted$ID)
+
+
+
+pl1 <-  gDNA_reads_aver_expr_common  %>%
+  ggplot(aes(y = ID,  x = factor(Type))) + 
+  geom_tile(aes(fill = avg_nReads_log1p)) +  
+  scale_fill_continuous(low = "white", high = "white")
+
+pl1
+
+
+
+pl2<- pl1  +   
+  geom_point(aes(color=avg_nReads_log1p, size = frac_cells)) +    
+  scale_colour_gradient(low = "grey", high = "#990000", limits = c(0,max_plot)) +  
+  #scale_colour_gradient2(low = "#990000", mid = "grey", high = "#336600", midpoint = 0, limits = c(0,3))+     
+  scale_size(breaks = c(0, 0.25, 0.5, 0.75, 1), range = c(0, 6), limits = c(0,1))+ 
+  theme_bw()
+
+pl2
+
+
+ggsave(filename = "Dot_plot_expression_fraction_gDNA_common_Exp.pdf", path = plot_save_dir, plot = pl2, device = "pdf", scale = 1,
+       width = 15, height = 40, units = "cm", dpi = 300)
+       
+```      
+
+
+
+
+#Make summarized dot plot with common targets only 
+
+
+```{r, fig.width = 10, fig.height = 4}
+
+#Make summarized figure
+
+gDNA_reads_aver_expr_common_all <- gDNA_reads_aver_expr_common %>% 
+                            dplyr::group_by(Type) %>% 
+                                  dplyr::summarize(avg_nReads_per_targ = mean(avg_nReads),
+                                                avg_frac_cell_per_targ = mean(frac_cells),
+                                                .groups = "drop") %>%
+                            dplyr::mutate(avg_nReads_per_targ_log1p = log1p(avg_nReads_per_targ),
+                                          Class = "all")
+
+
+gDNA_reads_aver_expr_common_EG <- gDNA_reads_aver_expr_common %>% 
+                            dplyr::group_by(Type, EG_Class) %>% 
+                                  dplyr::summarize(avg_nReads_per_targ = mean(avg_nReads),
+                                                avg_frac_cell_per_targ = mean(frac_cells),
+                                                .groups = "drop") %>%
+                            dplyr::mutate(avg_nReads_per_targ_log1p = log1p(avg_nReads_per_targ)) %>%
+                            dplyr::rename(Class = EG_Class)
+                                          
+
+gDNA_reads_aver_exp_common_Chr <- gDNA_reads_aver_expr_common %>% 
+                            dplyr::group_by(Type, Chr_Class) %>% 
+                                  dplyr::summarize(avg_nReads_per_targ = mean(avg_nReads),
+                                                avg_frac_cell_per_targ = mean(frac_cells),
+                                                .groups = "drop") %>%
+                            dplyr::mutate(avg_nReads_per_targ_log1p = log1p(avg_nReads_per_targ)) %>%
+                            dplyr::rename(Class = Chr_Class)
+
+
+
+#Combine files
+
+
+gDNA_reads_aver_expr_common_figure <- rbind(gDNA_reads_aver_expr_common_all, gDNA_reads_aver_expr_common_EG, gDNA_reads_aver_exp_common_Chr)
+
+
+
+
+
+#make dotplot
+
+max_plot <- max(gDNA_reads_aver_expr_common_figure$avg_nReads_per_targ_log1p)
+sorted <- c("all", "OEG", "NOEG", "PLS", "pELS", "dELS", "H3K4", "DNase-only", "low-DNase")
+gDNA_reads_aver_expr_common_figure$Class <- factor(gDNA_reads_aver_expr_common_figure$Class, levels = sorted)
+
+
+
+pl1 <-  gDNA_reads_aver_expr_figure  %>%
+  ggplot(aes(y = Class,  x = factor(Type))) + 
+  geom_tile(aes(fill = avg_nReads_per_targ)) +  
+  scale_fill_continuous(low = "white", high = "white")
+
+pl1
+
+
+
+pl2<- pl1  +   
+  geom_point(aes(color=avg_nReads_per_targ_log1p, size = avg_frac_cell_per_targ)) +    
+  scale_colour_gradient(low = "grey", high = "#990000", limits = c(0, 7)) +  
+  #scale_colour_gradient2(low = "#990000", mid = "grey", high = "#336600", midpoint = 0, limits = c(0,3))+     
+  scale_size(breaks = c(0, 0.25, 0.5, 0.75, 1), range = c(0, 12), limits= c(0,1))+ 
+  # scale_size(breaks = c(0.5, 0.75, 1), range = c(0, 10), limits= c(0,1))+ 
+  theme_bw()
+
+pl2
+
+
+ggsave(filename = "Dot_plot_expression_fraction_gDNA_common_for_figure.pdf", path = plot_save_dir, plot = pl2, device = "pdf", scale = 1,width = 12, height = 12, units = "cm", dpi = 300)
+       
+```
+
+
+
+#Make plot for supplement - average expression vs detection per chromosomal site
+
+
+```{r, fig.width = 10, fig.height = 4}
+
+
+
+title = "Normailzed_read_depth_vs_fraction_of_cells_per_Class_gDNA_common.pdf"
+p <- gDNA_reads_aver_expr_figure  %>%
+ggplot(aes(x = avg_frac_cell_per_targ, y = avg_nReads_per_targ_log1p, color = Class)) +
+  geom_point(size = 7) +
+  labs(x = "% cells detected in", y = "avg_nReads_per_targ") +
+  #scale_y_log10() +
+  scale_y_continuous(limits = c(0, 7))+
+  scale_x_continuous(labels = scales::percent, limits = c(0.5,1)) +
+  theme_classic()+
+  ggtitle(title)+
+  facet_wrap(~Type, ncol = 9)+
+  guides(fill = FALSE, color = FALSE)
+  
+p
+
+
+ggsave(filename = title, path = plot_save_dir, plot = p, device = "pdf", scale = 1, width = 30, height = 15, units = "cm", dpi = 300)
+       
+
+
+
+title = "Normailzed_read_depth_vs_fraction_of_cells_per_Class_gDNA_common_with_legend.pdf"
+p <- gDNA_reads_aver_expr_figure  %>%
+ggplot(aes(x = avg_frac_cell_per_targ, y = avg_nReads_per_targ_log1p, color = Class)) +
+  geom_point(size = 7) +
+  labs(x = "% cells detected in", y = "avg_nReads_per_targ") +
+  #scale_y_log10() +
+  scale_y_continuous(limits = c(0, 7))+
+  scale_x_continuous(labels = scales::percent, limits = c(0.5,1)) +
+  theme_classic()+
+  facet_wrap(~Type, ncol = 9)+
+    ggtitle(title)
+  
+p
+
+
+ggsave(filename = title, path = plot_save_dir, plot = p, device = "pdf", scale = 1, width = 30, height = 15, units = "cm", dpi = 300)
+       
+
+
+```
+
+
+
+
+#Make plot - foldchange - per target between panels
+
+
+
+```{r, fig.width = 10, fig.height = 4}
+
+
+title = "FC_gDNA_frac_cells-vs-FC_gDNA_avg_nReads_commonn.pdf"
+
+p <- gDNA_reads_aver_expr_common  %>%
+ggplot(aes(x = frac_cells_fc , y = avg_nReads_fc, color = Type)) +
+  geom_point(size = 7) +
+  labs(x = "FC_frac_cells" , y = "FC_avg_nReads") +
+  #scale_y_log10() +
+    scale_color_manual(values = group_colors )+
+    scale_x_continuous(limits = c(-10,10)) +
+  scale_y_continuous(limits = c(-12, 12))+
+  geom_hline(yintercept = 0, linetype = "dashed") + 
+  geom_vline(xintercept = 0, linetype = "dashed") +
+  theme_classic()+
+  ggtitle(title)+
+  facet_wrap(~Type, ncol = 9)+
+    guides(fill = FALSE, color = FALSE)
+
+
+ggsave(filename = title, path = plot_save_dir, plot = p, device = "pdf", scale = 1,
+       width = 30, height = 15, units = "cm", dpi = 300)
+
+p
+
+
+```
+
+
+#Make plot - foldchange - per target between panels - fc vs reads
+
+
+```{r, fig.width = 10, fig.height = 4}
+
+title = "FC_gDNA_frac_cells-vs-gDNA_avg_nReads_log1p_commonn.pdf"
+
+
+p <- gDNA_reads_aver_expr_common  %>%
+ggplot(aes(x = frac_cells_fc, y =  avg_nReads_log1p, color = Type)) +
+  geom_point(size = 7) +
+  labs(x = "FC_frac_cells", y = "avg_nReads") +
+      scale_color_manual(values = group_colors )+
+  #scale_y_log10() +
+  scale_y_continuous(limits = c(0, 7))+
+  scale_x_continuous(limits = c(-10,10)) +
+  geom_hline(yintercept = 0, linetype = "dashed") + 
+  geom_vline(xintercept = 0, linetype = "dashed") +
+  theme_classic()+
+   facet_wrap(~Type, ncol = 3)+
+  ggtitle(title)+
+      guides(fill = FALSE, color = FALSE)
+
+ggsave(filename = title, path = plot_save_dir, plot = p, device = "pdf", scale = 1,
+       width = 30, height = 15, units = "cm", dpi = 300)
+
+p
+
+
+```
+
+
+
+
+#Make plot - foldchange - per target between panels - fc vs reads
+
+
+```{r, fig.width = 10, fig.height = 4}
+
+
+title = "FC_avg_nReads-vs-gDNA_avg_nReads_log1p_commonn.pdf"
+
+
+p <- gDNA_reads_aver_expr_common  %>%
+ggplot(aes(x = avg_nReads_fc, y =  avg_nReads_log1p, color = Type)) +
+  geom_point(size = 7) +
+  labs(x = "FC_frac_cells", y = "avg_nReads") +
+      scale_color_manual(values = group_colors )+
+  #scale_y_log10() +
+  scale_y_continuous(limits = c(0, 7))+
+  scale_x_continuous(limits = c(-11,11)) +
+  geom_hline(yintercept = 0, linetype = "dashed") + 
+  geom_vline(xintercept = 0, linetype = "dashed") +
+  theme_classic()+
+   facet_wrap(~Type, ncol = 3)+
+  ggtitle(title)+
+      guides(fill = FALSE, color = FALSE)
+
+ggsave(filename = title, path = plot_save_dir, plot = p, device = "pdf", scale = 1,
+       width = 30, height = 15, units = "cm", dpi = 300)
+
+p
+
+
+```
+
+
+
+#Dotplot - y frac_cells_fc - x - ID
+
+
+```{r, fig.width = 10, fig.height = 4}
+
+sorted <- gDNA_reads_aver_expr_common %>% filter(Type == "SDR002_60_60") %>% dplyr::arrange(desc(avg_nReads))
+gDNA_reads_aver_expr_common$ID <- factor(gDNA_reads_aver_expr_common$ID , levels = sorted$ID )
+
+
+title = "FC_gDNA_frac_cells-vs-avg_nReads_common.pdf"
+p <- gDNA_reads_aver_expr_common  %>%
+ggplot(aes(x = ID, y =  frac_cells_fc, color = Type, size = avg_nReads_log1p)) +
+  geom_point(alpha =0.4) +
+  scale_x_discrete(guide = guide_axis(angle = 90)) +
+  labs(x = "ID", y = "FC_frac_cells") +
+          scale_color_manual(values = group_colors )+
+  #scale_y_log10() +
+  #scale_y_continuous(limits = c(0, 7))+
+  #scale_x_continuous(limits = c(-10,10)) +
+  #geom_hline(yintercept = 0, linetype = "dashed") + 
+  #geom_vline(xintercept = 0, linetype = "dashed") +
+  theme_classic()+
+  #  facet_wrap(~orig.ident, ncol = 9)+
+  ggtitle(title)
+
+p
+
+
+ggsave(filename = title, path = plot_save_dir, plot = p, device = "pdf", scale = 1,
+       width = 40, height = 10, units = "cm", dpi = 300)
+
+
+
+
+
+```
+
+
+
+
+#Dotplot - y frac_cells_fc - x - ID
+
+
+```{r, fig.width = 10, fig.height = 4}
+
+sorted <- gDNA_reads_aver_expr_common %>% filter(Type == "SDR002_60_60") %>% dplyr::arrange(desc(avg_nReads))
+gDNA_reads_aver_expr_common$ID <- factor(gDNA_reads_aver_expr_common$ID , levels = sorted$ID )
+
+
+title = "FC_avg_nReads-vs-avg_nReads_common.pdf"
+p <- gDNA_reads_aver_expr_common  %>%
+ggplot(aes(x = ID, y =  avg_nReads_fc, color = Type, size = avg_nReads_log1p)) +
+  geom_point(alpha =0.4) +
+  scale_x_discrete(guide = guide_axis(angle = 90)) +
+  labs(x = "ID", y = "FC_frac_cells") +
+          scale_color_manual(values = group_colors )+
+  #scale_y_log10() +
+  #scale_y_continuous(limits = c(0, 7))+
+  #scale_x_continuous(limits = c(-10,10)) +
+  #geom_hline(yintercept = 0, linetype = "dashed") + 
+  #geom_vline(xintercept = 0, linetype = "dashed") +
+  theme_classic()+
+  #  facet_wrap(~orig.ident, ncol = 9)+
+  ggtitle(title)
+
+p
+
+
+ggsave(filename = title, path = plot_save_dir, plot = p, device = "pdf", scale = 1,
+       width = 40, height = 10, units = "cm", dpi = 300)
+
+
+
+```
+
+
+
+
+#Dotplot - Correlation of Expression SDR60_60 vs SDR120 and SDR240
+
+
+```{r, fig.width = 4, fig.height = 4}
+
+to_add <- gDNA_reads_aver_expr_common %>% dplyr::filter(Type == "SDR002_60_60") %>% 
+                                          dplyr::select(ID, avg_nReads, frac_cells) %>% 
+                                          dplyr::rename(avg_nReads_60 = avg_nReads, frac_cells_60 = frac_cells)
+
+
+gDNA_reads_aver_expr_common_cor <- gDNA_reads_aver_expr_common %>% 
+                           #dplyr::filter(orig.ident == "SDR002_120_120" | 
+                                 #        orig.ident == "SDR002_240_240") %>%
+                           dplyr::left_join(to_add, by = "ID")
+                           
+cor_data <- gDNA_reads_aver_expr_common_cor %>%
+  group_by(Type) %>%
+  summarize(correlation = cor(avg_nReads_60, avg_nReads), use = "complete.obs", method = "pearson")
+  
+
+title = "Correlation_gDNA_avg_nReads_common.pdf"
+p <- gDNA_reads_aver_expr_cor  %>%
+ggplot(aes(x = avg_nReads_60, y =  avg_nReads, color = Type)) +
+  geom_point(size = 7) +
+  scale_color_manual(values = group_colors )+
+  #scale_x_discrete("") +
+  labs(x = "avg_nReads_60", y = "avg_nReads") +
+  scale_y_log10(limits = c(5, 800)) +
+  scale_x_log10(limits = c(5, 800)) +
+geom_smooth(method = "lm", se = FALSE, size = 1, aes(group = Type, color = Type)) +
+geom_text(data = cor_data, aes(label = sprintf("Correlation: %.2f", correlation)),
+            x = Inf, y = -Inf, hjust = 1, vjust = -2, size = 3, color = "black")+
+  theme_classic()+
+   #facet_wrap(~orig.ident, ncol = 9)+
+  ggtitle(title)+
+  guides(color = FALSE)
+  
+p
+
+ggsave(filename = title, path = plot_save_dir, plot = p, device = "pdf", scale = 1,width = 15, height = 15, units = "cm", dpi = 300)
+       
+
+
+
+```
+
+
+
+
+#Same plot with fraction of cells
+
+```{r, fig.width = 3, fig.height = 3}
+
+
+cor_data <- gDNA_reads_aver_expr_common_cor %>%
+  group_by(Type) %>%
+  summarize(correlation = cor(frac_cells_60, frac_cells), use = "complete.obs", method = "pearson")
+  
+
+title = "Correlation_gDNA_frac_cells_common.pdf"
+p <- gDNA_reads_aver_expr_cor  %>%
+ggplot(aes(x = frac_cells_60, y =  frac_cells, color = Type)) +
+  geom_point(size = 7) +
+  scale_color_manual(values = group_colors )+
+    scale_x_continuous(limits = c(0,1)) +
+    scale_y_continuous(limits = c(0,1)) +
+  #scale_x_discrete("") +
+  labs(x = "frac_cells_60", y = "frac_cells") +
+  #scale_y_log10() +
+  #scale_x_log10()+
+geom_smooth(method = "lm", se = FALSE, size = 1, aes(group = Type, color = Type)) +
+geom_text(data = cor_data, aes(label = sprintf("Correlation: %.2f", correlation)),
+            x = Inf, y = -Inf, hjust = 1, vjust = -2, size = 3, color = "black")+
+  theme_classic()+
+   #facet_wrap(~orig.ident, ncol = 9)+
+  ggtitle(title)+
+  guides(color = FALSE)
+  
+
+p
+
+ggsave(filename = title, path = plot_save_dir, plot = p, device = "pdf", scale = 1,width = 15, height = 15, units = "cm", dpi = 300)
+       
+
+
+```
+
+
+
+
+
+
+
+#Plots RNA_________________________________________________________________________________________________________________________________________
+
+#Plot fraction of cells vs expression - Dotplot - all targets
+
+```{r, fig.width = 6, fig.height = 4}
+
+
+title = "RNA_average_expression_vs_fract_cells_Exp_all.pdf"
+p <- RNA_UMIs_aver_expr  %>%
+ggplot(aes(x = frac_cells, y = avg_nUMIs_log1p, color = Type)) +
+  geom_point(size = 6) +
+  labs(x = "% cells detected in", y = "avg_nReads_log1p") +
+  scale_y_continuous(limits = c(0, 7)) +
+  scale_x_continuous(labels = scales::percent, limits = c(0, 1)) +
+   geom_vline(xintercept = 0.8, linetype = "dashed") +
+  #scale_x_continuous(labels = scales::percent, limits = c(0,1)) +
+  theme_classic()+
+  ggtitle(title)+
+  facet_wrap(~Type)+
+      scale_color_manual(values = group_colors)+
+      guides(fill = FALSE, color = FALSE)
+
+
+
+ggsave(filename = title , path = plot_save_dir, plot = p, device = "pdf", scale = 1,
+       width = 30, height = 15, units = "cm", dpi = 300)
+
+p
+
+```
+
+
+
+
+#Plot fraction of cells vs expression - Dotplot - common targets
+
+```{r, fig.width = 6, fig.height = 4}
+
+
+
+title = "RNA_average_expression_vs_fract_cells_Exp_common.pdf"
+p <- RNA_UMIs_aver_expr_common  %>%
+ggplot(aes(x = frac_cells, y = avg_nUMIs_log1p, color = Type)) +
+  geom_point(size = 6) +
+  labs(x = "% cells detected in", y = "avg_nReads_log1p") +
+  scale_y_continuous(limits = c(0, 7)) +
+  scale_x_continuous(labels = scales::percent, limits = c(0, 1)) +
+   geom_vline(xintercept = 0.8, linetype = "dashed") +
+  #scale_x_continuous(labels = scales::percent, limits = c(0,1)) +
+  theme_classic()+
+  ggtitle(title)+
+  facet_wrap(~Type)+
+      scale_color_manual(values = group_colors)+
+      guides(fill = FALSE, color = FALSE)
+
+
+
+ggsave(filename = title , path = plot_save_dir, plot = p, device = "pdf", scale = 1,
+       width = 30, height = 15, units = "cm", dpi = 300)
+
+p
+
+```
+
+
+
+
+#Make size dotplot - fraction vs expression - common
+
+```{r, fig.width = 6, fig.height = 14}
+
+#Find max for plot
+max_plot <- max(RNA_UMIs_aver_expr_common$avg_nUMIs_log1p)
+
+#Set order for plot
+sorted <- RNA_UMIs_aver_expr_common %>% filter(Type == "SDR002_60_60") %>% arrange(desc(frac_cells))
+RNA_UMIs_aver_expr_common$ID <- factor(RNA_UMIs_aver_expr_common$ID, levels = sorted$ID)
+
+
+
+pl1 <-  RNA_UMIs_aver_expr_common  %>%
+  ggplot(aes(y = ID,  x = factor(Type))) + 
+  geom_tile(aes(fill = avg_nUMIs_log1p)) +  
+  scale_fill_continuous(low = "white", high = "white")
+
+pl1
+
+
+
+pl2<- pl1  +   
+  geom_point(aes(color=avg_nUMIs_log1p, size = frac_cells)) +    
+  scale_colour_gradient(low = "grey", high = "#990000", limits = c(0,max_plot)) +  
+  #scale_colour_gradient2(low = "#990000", mid = "grey", high = "#336600", midpoint = 0, limits = c(0,3))+     
+  scale_size(breaks = c(0, 0.25, 0.5, 0.75, 1), range = c(0, 6), limits = c(0,1))+ 
+  theme_bw()
+
+pl2
+
+
+ggsave(filename = "Dot_plot_expression_fraction_RNA_common_Exp.pdf", path = plot_save_dir, plot = pl2, device = "pdf", scale = 1,
+       width = 15, height = 20, units = "cm", dpi = 300)
+       
+```      
+
+
+
+#Make summarized dot plot with common targets only 
+
+
+```{r, fig.width = 10, fig.height = 4}
+
+#Make summarized figure
+
+RNA_UMIs_aver_expr_common_all <- RNA_UMIs_aver_expr_common %>% 
+                            dplyr::group_by(Type) %>% 
+                                  dplyr::summarize(avg_nUMIs_per_targ = mean(avg_nUMIs),
+                                                avg_frac_cell_per_targ = mean(frac_cells),
+                                                .groups = "drop") %>%
+                            dplyr::mutate(avg_nUMIs_per_targ_log1p = log1p(avg_nUMIs_per_targ),
+                                          Class = "all")
+
+RNA_UMIs_aver_expr_common_Expr <- RNA_UMIs_aver_expr_common %>% 
+                            dplyr::group_by(Type, Expression_level) %>% 
+                                  dplyr::summarize(avg_nUMIs_per_targ = mean(avg_nUMIs),
+                                                avg_frac_cell_per_targ = mean(frac_cells),
+                                                .groups = "drop") %>%
+                            dplyr::mutate(avg_nUMIs_per_targ_log1p = log1p(avg_nUMIs_per_targ)) %>%
+                            dplyr::rename(Class = Expression_level)
+                                          
+
+
+
+
+#Combine files
+
+
+RNA_UMIs_aver_expr_common_figure <- rbind(RNA_UMIs_aver_expr_common_all, RNA_UMIs_aver_expr_common_Expr )
+
+
+
+
+
+#make dotplot
+
+max_plot <- max(RNA_UMIs_aver_expr_common_figure $avg_nReads_per_targ_log1p)
+sorted <- c("all", "HIGH", "MEDIUM", "LOW")  
+RNA_UMIs_aver_expr_common_figure $Class <- factor(RNA_UMIs_aver_expr_common_figure $Class, levels = sorted)
+
+
+
+pl1 <-  RNA_UMIs_aver_expr_common_figure   %>%
+  ggplot(aes(y = Class,  x = factor(Type))) + 
+  geom_tile(aes(fill = avg_nUMIs_per_targ_log1p)) +  
+  scale_fill_continuous(low = "white", high = "white")
+
+pl1
+
+
+
+pl2<- pl1  +   
+  geom_point(aes(color=avg_nUMIs_per_targ_log1p, size = avg_frac_cell_per_targ)) +    
+  scale_colour_gradient(low = "grey", high = "#990000", limits = c(0, 7)) +  
+  #scale_colour_gradient2(low = "#990000", mid = "grey", high = "#336600", midpoint = 0, limits = c(0,3))+     
+  scale_size(breaks = c(0, 0.25, 0.5, 0.75, 1), range = c(0, 12), limits= c(0,1))+ 
+  # scale_size(breaks = c(0.5, 0.75, 1), range = c(0, 10), limits= c(0,1))+ 
+  theme_bw()
+
+pl2
+
+
+ggsave(filename = "Dot_plot_expression_fraction_RNA_common_for_figure.pdf", path = plot_save_dir, plot = pl2, device = "pdf", scale = 1,width = 12, height = 6, units = "cm", dpi = 300)
+       
+
+
+
+```
+
+
+
+
+
+
+#Make plot for supplement - average expression vs detection per chromosomal site
+
+
+```{r, fig.width = 10, fig.height = 4}
+
+
+
+title = "Normailzed_read_depth_vs_fraction_of_cells_per_Expression_level_RNA_common.pdf"
+p <- RNA_UMIs_aver_expr_common_figure  %>%
+ggplot(aes(x = avg_frac_cell_per_targ, y = avg_nUMIs_per_targ_log1p, color = Class)) +
+  geom_point(size = 7) +
+  labs(x = "% cells detected in", y = "avg_nReads_per_targ") +
+  #scale_y_log10() +
+  scale_y_continuous(limits = c(0, 7))+
+  scale_x_continuous(labels = scales::percent, limits = c(0.5,1)) +
+  theme_classic()+
+  ggtitle(title)+
+  facet_wrap(~Type, ncol = 9)+
+  guides(fill = FALSE, color = FALSE)
+  
+p
+
+
+ggsave(filename = title, path = plot_save_dir, plot = p, device = "pdf", scale = 1, width = 30, height = 15, units = "cm", dpi = 300)
+       
+
+
+
+title = "Normailzed_read_depth_vs_fraction_of_cells_per_Expression_level_RNA_common_with_legend.pdf"
+p <- RNA_UMIs_aver_expr_common_figure  %>%
+ggplot(aes(x = avg_frac_cell_per_targ, y = avg_nUMIs_per_targ_log1p, color = Class)) +
+  geom_point(size = 7) +
+  labs(x = "% cells detected in", y = "avg_nReads_per_targ") +
+  #scale_y_log10() +
+  scale_y_continuous(limits = c(0, 7))+
+  scale_x_continuous(labels = scales::percent, limits = c(0.5,1)) +
+  theme_classic()+
+  facet_wrap(~Type, ncol = 9)+
+    ggtitle(title)
+  
+p
+
+
+ggsave(filename = title, path = plot_save_dir, plot = p, device = "pdf", scale = 1, width = 30, height = 15, units = "cm", dpi = 300)
+       
+
+
+```
+
+
+
+
+
+
+
+#Make plot - foldchange - per target between panels
+
+
+
+```{r, fig.width = 10, fig.height = 4}
+
+
+title = "FC_RNA_frac_cells-vs-FC_RNA_avg_nUMIs_commonn.pdf"
+
+p <- RNA_UMIs_aver_expr_common  %>%
+ggplot(aes(x = frac_cells_fc , y = avg_nUMIs_fc, color = Type)) +
+  geom_point(size = 7) +
+  labs(x = "FC_frac_cells" , y = "FC_avg_nUMIs") +
+  #scale_y_log10() +
+    scale_color_manual(values = group_colors )+
+  scale_y_continuous(limits = c(-4, 4))+
+  scale_x_continuous(limits = c(-4, 4)) +
+  geom_hline(yintercept = 0, linetype = "dashed") + 
+  geom_vline(xintercept = 0, linetype = "dashed") +
+  theme_classic()+
+  ggtitle(title)+
+  facet_wrap(~Type, ncol = 9)+
+    guides(fill = FALSE, color = FALSE)
+
+
+ggsave(filename = title, path = plot_save_dir, plot = p, device = "pdf", scale = 1,
+       width = 30, height = 15, units = "cm", dpi = 300)
+
+p
+
+
+```
+
+
+
+
+#Make plot - foldchange - per target between panels - fc vs reads
+
+
+```{r, fig.width = 10, fig.height = 4}
+
+title = "FC_RNA_frac_cells-vs-RNA_avg_nUMIs_log1p_commonn.pdf"
+
+
+p <- RNA_UMIs_aver_expr_common  %>%
+ggplot(aes(x = frac_cells_fc, y =  avg_nUMIs_log1p, color = Type)) +
+  geom_point(size = 7) +
+  labs(x = "FC_frac_cells", y = "avg_nUMIs") +
+      scale_color_manual(values = group_colors )+
+  #scale_y_log10() +
+  scale_y_continuous(limits = c(0, 6))+
+  scale_x_continuous(limits = c(-4,4)) +
+  geom_hline(yintercept = 0, linetype = "dashed") + 
+  geom_vline(xintercept = 0, linetype = "dashed") +
+  theme_classic()+
+   facet_wrap(~Type, ncol = 3)+
+  ggtitle(title)+
+      guides(fill = FALSE, color = FALSE)
+
+ggsave(filename = title, path = plot_save_dir, plot = p, device = "pdf", scale = 1,
+       width = 30, height = 15, units = "cm", dpi = 300)
+
+p
+
+
+```
+
+
+
+#Make plot - foldchange - per target between panels - fc vs reads
+
+
+```{r, fig.width = 10, fig.height = 4}
+
+
+title = "FC_avg_nReads-vs-RNA_avg_nUMIs_log1p_commonn.pdf"
+
+
+p <- RNA_UMIs_aver_expr_common  %>%
+ggplot(aes(x = avg_nUMIs_fc, y =  avg_nUMIs_log1p, color = Type)) +
+  geom_point(size = 7) +
+  labs(x = "FC_frac_cells", y = "avg_nReads") +
+      scale_color_manual(values = group_colors )+
+  #scale_y_log10() +
+  scale_y_continuous(limits = c(0, 6))+
+  scale_x_continuous(limits = c(-4,4)) +
+  geom_hline(yintercept = 0, linetype = "dashed") + 
+  geom_vline(xintercept = 0, linetype = "dashed") +
+  theme_classic()+
+   facet_wrap(~Type, ncol = 3)+
+  ggtitle(title)+
+      guides(fill = FALSE, color = FALSE)
+
+ggsave(filename = title, path = plot_save_dir, plot = p, device = "pdf", scale = 1,
+       width = 30, height = 15, units = "cm", dpi = 300)
+
+p
+
+
+```
+
+
+#Dotplot - y frac_cells_fc - x - ID
+
+
+```{r, fig.width = 10, fig.height = 4}
+
+sorted <- RNA_UMIs_aver_expr_common %>% filter(Type == "SDR002_60_60") %>% dplyr::arrange(desc(avg_nUMIs))
+RNA_UMIs_aver_expr_common$ID <- factor(RNA_UMIs_aver_expr_common$ID , levels = sorted$ID )
+
+
+title = "FC_RNA_frac_cells-vs-avg_nReads_common.pdf"
+p <- RNA_UMIs_aver_expr_common  %>%
+ggplot(aes(x = ID, y =  frac_cells_fc, color = Type, size = avg_nUMIs_log1p)) +
+  geom_point(alpha =0.4) +
+  scale_x_discrete(guide = guide_axis(angle = 90)) +
+  labs(x = "ID", y = "FC_frac_cells") +
+  scale_color_manual(values = group_colors )+
+  #scale_y_log10() +
+  #scale_y_continuous(limits = c(0, 7))+
+  #scale_x_continuous(limits = c(-10,10)) +
+  #geom_hline(yintercept = 0, linetype = "dashed") + 
+  #geom_vline(xintercept = 0, linetype = "dashed") +
+  theme_classic()+
+  #  facet_wrap(~orig.ident, ncol = 9)+
+  ggtitle(title)
+
+p
+
+
+ggsave(filename = title, path = plot_save_dir, plot = p, device = "pdf", scale = 1,
+       width = 40, height = 10, units = "cm", dpi = 300)
+
+
+
+
+
+```
+
+
+
+
+#Dotplot - y frac_cells_fc - x - ID
+
+
+```{r, fig.width = 10, fig.height = 4}
+
+sorted <- RNA_UMIs_aver_expr_common %>% filter(Type == "SDR002_60_60") %>% dplyr::arrange(desc(avg_nUMIs))
+RNA_UMIs_aver_expr_common$ID <- factor(RNA_UMIs_aver_expr_common$ID , levels = sorted$ID )
+
+
+title = "FC_RNA_avg_nUMIs-vs-avg_nReads_common.pdf"
+p <- RNA_UMIs_aver_expr_common  %>%
+ggplot(aes(x = ID, y =  avg_nUMIs_fc, color = Type, size = avg_nUMIs_log1p)) +
+  geom_point(alpha =0.4) +
+  scale_x_discrete(guide = guide_axis(angle = 90)) +
+  labs(x = "ID", y = "FC_frac_cells") +
+  scale_color_manual(values = group_colors )+
+  #scale_y_log10() +
+  #scale_y_continuous(limits = c(0, 7))+
+  #scale_x_continuous(limits = c(-10,10)) +
+  #geom_hline(yintercept = 0, linetype = "dashed") + 
+  #geom_vline(xintercept = 0, linetype = "dashed") +
+  theme_classic()+
+  #  facet_wrap(~orig.ident, ncol = 9)+
+  ggtitle(title)
+
+p
+
+
+ggsave(filename = title, path = plot_save_dir, plot = p, device = "pdf", scale = 1,
+       width = 40, height = 10, units = "cm", dpi = 300)
+
+
+
+
+
+```
+
+
+
+
+#Dotplot - Correlation of Expression SDR60_60 vs SDR120 and SDR240
+
+
+```{r, fig.width = 4, fig.height = 4}
+
+to_add <- RNA_UMIs_aver_expr_common %>% dplyr::filter(Type == "SDR002_60_60") %>% 
+                                          dplyr::select(ID, avg_nUMIs, frac_cells) %>% 
+                                          dplyr::rename(avg_nUMIs_60 = avg_nUMIs, frac_cells_60 = frac_cells)
+
+
+RNA_UMIs_aver_expr_common_cor <- RNA_UMIs_aver_expr_common %>% 
+                           #dplyr::filter(orig.ident == "SDR002_120_120" | 
+                                 #        orig.ident == "SDR002_240_240") %>%
+                           dplyr::left_join(to_add, by = "ID")
+                           
+cor_data <- RNA_UMIs_aver_expr_common_cor %>%
+  group_by(Type) %>%
+  summarize(correlation = cor(avg_nUMIs_60, avg_nUMIs, use = "complete.obs", method = "pearson"))
+  
+
+title = "Correlation_RNA_avg_nReads_common.pdf"
+p <- RNA_UMIs_aver_expr_common_cor  %>%
+ggplot(aes(x = avg_nUMIs_60, y =  avg_nUMIs, color = Type)) +
+  geom_point(size = 7) +
+  scale_color_manual(values = group_colors )+
+  #scale_x_discrete("") +
+  labs(x = "avg_nReads_60", y = "avg_nReads") +
+  scale_y_log10(limits = c(1, 300)) +
+  scale_x_log10(limits = c(1, 300)) +
+geom_smooth(method = "lm", se = FALSE, size = 1, aes(group = Type, color = Type)) +
+geom_text(data = cor_data, aes(label = sprintf("Correlation: %.2f", correlation)),
+            x = Inf, y = -Inf, hjust = 1, vjust = -2, size = 3, color = "black")+
+  theme_classic()+
+   #facet_wrap(~orig.ident, ncol = 9)+
+  ggtitle(title)+
+  guides(color = FALSE)
+  
+p
+
+ggsave(filename = title, path = plot_save_dir, plot = p, device = "pdf", scale = 1,width = 15, height = 15, units = "cm", dpi = 300)
+       
+
+```
+
+
+
+
+
+#Same plot with fraction of cells
+
+```{r, fig.width = 4, fig.height = 4}
+
+
+cor_data <- RNA_UMIs_aver_expr_common_cor %>%
+  group_by(Type) %>%
+  summarize(correlation = cor(frac_cells_60, frac_cells, use = "complete.obs", method = "pearson"))
+  
+
+title = "Correlation_RNA_frac_cells_common.pdf"
+p <- RNA_UMIs_aver_expr_common_cor  %>%
+ggplot(aes(x = frac_cells_60, y =  frac_cells, color = Type)) +
+  geom_point(size = 7) +
+  scale_color_manual(values = group_colors )+
+    scale_x_continuous(limits = c(0,1)) +
+    scale_y_continuous(limits = c(0,1)) +
+  #scale_x_discrete("") +
+  labs(x = "frac_cells_60", y = "frac_cells") +
+  #scale_y_log10() +
+  #scale_x_log10()+
+geom_smooth(method = "lm", se = FALSE, size = 1, aes(group = Type, color = Type)) +
+geom_text(data = cor_data, aes(label = sprintf("Correlation: %.2f", correlation)),
+            x = Inf, y = -Inf, hjust = 1, vjust = -2, size = 3, color = "black")+
+  theme_classic()+
+   #facet_wrap(~orig.ident, ncol = 9)+
+  ggtitle(title)+
+  guides(color = FALSE)
+  
+
+p
+
+ggsave(filename = title, path = plot_save_dir, plot = p, device = "pdf", scale = 1,width = 15, height = 15, units = "cm", dpi = 300)
+       
+
+
+```
+
+
+#Make heatmap
+
+```{r, fig.width = 4, fig.height = 6}
+
+library(reshape2)
+library(pheatmap)
+library(RColorBrewer)
+
+RNA_UMIs_aver_expr_common_mat <- RNA_UMIs_aver_expr_common %>%
+  select(ID, Type, avg_nUMIs) %>%
+  dcast(ID ~  Type, value.var = "avg_nUMIs")
+
+
+rownames(RNA_UMIs_aver_expr_common_mat) <- RNA_UMIs_aver_expr_common_mat$ID
+
+RNA_UMIs_aver_expr_common_mat <- RNA_UMIs_aver_expr_common_mat %>% select(-ID) %>% dplyr::arrange((SDR002_60_60))
+
+#Log transform and remove NAs
+RNA_UMIs_aver_expr_common_mat <- log1p(RNA_UMIs_aver_expr_common_mat)
+
+
+
+
+
+#Set Breaks for dataset
+breaksList = seq(-2, 2, by = 0.1)
+#breaksList <- seq(min(RNA_seq_iPSCs), max(RNA_seq_iPSCs), length.out = 50)
+
+#Set colors for dataset
+myColor <- colorRampPalette(rev(brewer.pal(n = 7, name = "RdBu")))(length(breaksList))
+
+
+
+p <- pheatmap(RNA_UMIs_aver_expr_common_mat,
+                      cluster_cols = FALSE,
+                      cluster_rows = FALSE,
+                      scale = "column", 
+              color = myColor,
+           breaks = breaksList,
+             # cutree_rows = 3, 
+             #annotation_row = annotation_row_data_frame,
+              show_rownames = TRUE
+             
+             )
+
+
+
+ggsave(filename = "Heatmap_RNA_log1p_common_scaled.pdf", path = plot_save_dir, plot = p, device = "pdf", scale = 1,
+       width = 15, height = 15, units = "cm", dpi = 300)
+
+
+
+```
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+

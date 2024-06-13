@@ -53,7 +53,7 @@ annot <- import(url, format = "gtf")
 tx_exons <- annot[annot$type == "exon" & annot$gene_type == "protein_coding"]
 
 # Names of target genes
-#REMARK - only predict primers that are new. Some identical primers were used from POP experiment
+#REMARK - only predict primers that are new. Some identical primers were used from POP experiment and just copied. CROP-seq primer to detect gRNAs was added manually.
 
 target_gene_names <- as.character(read.csv('Input/RNA_gene_list_add.csv',header = FALSE)[,1])
 

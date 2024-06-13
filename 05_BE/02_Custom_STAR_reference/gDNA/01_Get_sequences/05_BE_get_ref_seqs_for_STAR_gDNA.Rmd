@@ -1,0 +1,200 @@
+---
+title: "20240328_SDR005_get_ref_seqs_for_STAR"
+author: "Dominik Lindenhofer"
+date: "2024-03-28"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+## Load libs
+
+
+```{r}
+
+
+library(BSgenome)
+library(Biostrings)
+library(dplyr)
+library(stringr)
+library(here)
+
+library(GenomicRanges)
+
+
+```
+
+
+
+
+```{r}
+
+#Get seqs for V3 gDNA reference 
+
+
+#get sequences for gDNA targets
+SDR006_gDNA_amplicons <- read.csv("Input/05_BE_hg38_amplicon_pos.csv", header = TRUE)
+colnames(SDR006_gDNA_amplicons) <- c("ID", "Chromosome", "Start", "End", "fwd_seq", "rev_seq", "target_name")
+
+
+gDNA_targets_gr_1 <- makeGRangesFromDataFrame(SDR006_gDNA_amplicons, keep.extra.columns = TRUE)
+gDNA_targets_gr_2 <- makeGRangesFromDataFrame(SDR006_gDNA_amplicons, keep.extra.columns = TRUE)
+
+
+
+Overlap <- countOverlaps(gDNA_targets_gr_1, gDNA_targets_gr_2)
+gDNA_targets_gr_1$count_overlaps <- Overlap
+gDNA_targets_df_1 <- as.data.frame(gDNA_targets_gr_1)
+
+
+```
+
+
+
+
+```{r}
+# human genome BSgenome object (needs to be istalled from Bioconductor)
+hg38 <- getBSgenome("BSgenome.Hsapiens.UCSC.hg38")
+
+#get sequences for gDNA targets
+
+gDNA_targets <- SDR006_gDNA_amplicons 
+
+
+
+#Add 500 bp at each side 
+#gDNA_targets$Start <- gDNA_targets$Start-500
+#gDNA_targets$End <- gDNA_targets$End+500
+
+gDNA_targets_seq <- data.frame()
+
+for (i in unique(gDNA_targets$ID)){
+  gDNA_targets_i <- gDNA_targets %>% dplyr::filter(gDNA_targets$ID == i)
+  gDNA_targets_dna_i <- as.character(Biostrings::getSeq(hg38, gDNA_targets_i$Chromosome, gDNA_targets_i$Start,	gDNA_targets_i$End))
+  gDNA_targets_dna_i_df <- data.frame(ID = i, Chromosome = gDNA_targets_i$Chromosome, Start = gDNA_targets_i$Start, End = gDNA_targets_i$End,  Sequence = gDNA_targets_dna_i)
+  gDNA_targets_seq <- rbind(gDNA_targets_seq, gDNA_targets_dna_i_df)
+}
+
+gDNA_targets_seq <- gDNA_targets_seq %>% select(ID, Sequence)
+
+
+
+
+```
+
+
+
+
+
+#Combine both sequence files
+
+
+```{r}
+
+#Combine files
+
+#read gRNA file
+
+SDR006_gRNAs <- read.csv("Input/05_BE_guidePlasmidSeqs.csv", header = TRUE)
+
+#Split ID and make custom ID for gRNAs
+
+  
+id_split <- data.frame(do.call('rbind', strsplit(as.character(SDR006_gRNAs$ID),'_',fixed=TRUE)))
+
+id_split <- id_split %>% mutate(ID =str_c(X2, ":", X4))
+
+SDR006_gRNAs_ID_edit <- data.frame(ID = id_split$ID, Sequence = SDR006_gRNAs$Sequence)
+SDR006_combined <- rbind(gDNA_targets_seq, SDR006_gRNAs_ID_edit)
+
+
+write.csv(SDR006_combined, file = "05_BE_gDNA_targets_seq.csv", quote = FALSE, row.names = FALSE, col.names = TRUE)
+
+
+```
+
+
+
+
+#Make annotation file to be used for other seurat later
+
+```{r}
+
+#get sequences for gDNA targets
+
+
+#get sequences for gDNA targets
+SDR006_gDNA_amplicons <- read.csv("Input/05_BE_hg38_amplicon_pos.csv", header = TRUE)
+colnames(SDR006_gDNA_amplicons) <- c("ID", "Chromosome", "Start", "End", "fwd_seq", "rev_seq", "target_name")
+
+
+#Add columns indicating positional information in amplicon 
+SDR006_gDNA_amplicons  <- SDR006_gDNA_amplicons %>% mutate(Start_Amp = 1, End_Amp = End-Start+1 )
+
+
+write.csv(SDR006_gDNA_amplicons, file = "SDR006_genomic_annotation_file.csv", quote = FALSE, row.names = FALSE, col.names = TRUE)
+
+
+```
+
+
+#Get file for edits 
+
+```{r}
+#Load data
+final_edits <- read.csv("finalEdits_DLI_edit.csv")
+
+#Load annotation file
+SDR006_gDNA_amplicons <- read.csv("SDR006_genomic_annotation_file.csv")
+
+#Remove NA values 
+
+final_edits <- final_edits %>% filter(ID != "non-targeting") %>% arrange(index)
+final_edits <- final_edits %>% mutate(chrom = str_c("chr", snp_chrom))
+
+#Build input for liftover
+
+input_hg19 <- final_edits %>% select(chrom, chromStart = snp_position_hg19, chromEnd = snp_position_hg19, name = ID)
+
+write.table(input_hg19 , 
+            file = "SDR006_edits_hg19.bed", 
+            sep="\t",        # Specify tab delimiter
+            row.names=FALSE, # Do not include row names
+            col.names=FALSE, # BED files typically do not have a header
+            quote=FALSE)     # Do not include quotes around strings
+
+
+
+#Load liftover coordinates to hg38
+
+out_hg38 <- read.delim("SDR006_edits_hg38.bed", header = FALSE)
+colnames(out_hg38 ) <- c("Chrom", "Start", "End", "ID", "Length")
+
+out_hg38 <- out_hg38 %>% select(Chrom, snp_position_hg38 = Start, ID)
+
+#Join info
+
+final_edits <- final_edits %>% left_join(out_hg38, by = "ID")
+
+test <- unique(SDR006_gDNA_amplicons$target_name)
+test <- unique(final_edits$gene)
+
+
+#Join to annotation file
+
+to_add <- final_edits %>% select(-chrom, -Chrom)
+
+to_add <- to_add %>% dplyr::rename(Full_ID = ID)
+
+
+SDR006_gDNA_amplicons <- SDR006_gDNA_amplicons %>% left_join(to_add, by = c("target_name" = "gene"))
+
+
+write.csv(SDR006_gDNA_amplicons, file = "Input/05_BE_genomic_annotation_file.csv", quote = FALSE, row.names = FALSE, col.names = TRUE)
+
+
+```
+
+

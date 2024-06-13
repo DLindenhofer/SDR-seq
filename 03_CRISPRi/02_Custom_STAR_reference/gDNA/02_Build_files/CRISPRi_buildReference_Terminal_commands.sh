@@ -9,7 +9,7 @@
 
 
 
-python CRISPRi_buildReference.py -c 03_CRISPRi_gDNA_targets-seq.csv -o SDR001_gDNA_REF-V2
+python CRISPRi_buildReference.py -c 03_CRISPRi_gDNA_targets-seq.csv -o CRISPRi_gDNA_REF
 										
 
 

@@ -1,6 +1,6 @@
 # SDR-seq
 
-Code to anlayse each experiment presented in the manuscript. Data is deposited on GEO. 
+Code to anlayse each experiment presented in the manuscript. Data is deposited on GEO and EGA. 
 
 This includes:
 1. TAP-seq code for primer prediction

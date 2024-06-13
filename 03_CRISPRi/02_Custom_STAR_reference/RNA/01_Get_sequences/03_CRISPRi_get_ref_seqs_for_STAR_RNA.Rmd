@@ -1,0 +1,220 @@
+---
+title: "20231130_cDNA_custom_REF_3end"
+author: "Dominik Lindenhofer"
+date: "2023-11-30"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+#Load libraries
+```{r}
+
+library(rtracklayer)
+library(GenomicRanges)
+library(dplyr)
+
+
+```
+
+
+
+
+
+
+```{r}
+
+#Load data 
+
+cDNA_targets <- read.delim(file="Input/CRISPRi_TAP_seq_best_inner_primers_chromosomal_loc_add.txt")
+
+#Load GTF
+
+# download and import gencode hg38 annotations
+url <- "ftp://ftp.ebi.ac.uk/pub/databases/gencode/Gencode_human/release_41/gencode.v41.annotation.gtf.gz"
+annot <- import(url, format = "gtf")
+GTF_data_frame <- annot %>% as.data.frame() %>% tibble::as_tibble() 
+
+#Only select relevant columns
+
+GTF_data_frame <- GTF_data_frame%>% dplyr::select(seqnames, start, end, width, strand, type, gene_name) %>% distinct()
+
+
+#Loop to filter out start and end of each annotation site
+
+cDNA_targets_coord <- data.frame()
+
+for(i in unique(cDNA_targets$ID)){
+GTF_i <- GTF_data_frame %>% filter(gene_name == i)
+cDNA_targets_i <- cDNA_targets %>% filter(ID == i)
+GTF_gr_i <-  makeGRangesFromDataFrame(GTF_i, keep.extra.columns = TRUE)
+cDNA_targets_gr_i <- makeGRangesFromDataFrame(cDNA_targets_i, keep.extra.columns = TRUE)
+overlap_i <- countOverlaps(GTF_gr_i, cDNA_targets_gr_i)
+GTF_gr_i$count_overlaps <- overlap_i 
+GTF_df_i <- as.data.frame(GTF_gr_i)
+GTF_df_UTR_i <- GTF_df_i %>% filter((type == "gene"))
+
+#Determine start of ref seq - primer
+if(unique(GTF_df_UTR_i$strand == "+")){
+  cDNA_targets_i_ext <- cDNA_targets_i$Start
+} else {
+    cDNA_targets_i_ext <- cDNA_targets_i$End
+}
+
+#Determine end of ref seq - UTR
+if(unique(GTF_df_UTR_i$strand == "+")){
+  GTF_df_UTR_i_ext <- GTF_df_UTR_i %>% summarise(min_value = max(end))
+} else {
+    GTF_df_UTR_i_ext <- GTF_df_UTR_i %>%summarise(min_value = min(start))
+}
+
+
+#Determine which one should be start and which one end
+
+if(cDNA_targets_i_ext < GTF_df_UTR_i_ext){
+  Start_i <- cDNA_targets_i_ext
+  End_i <- GTF_df_UTR_i_ext$min_value
+} else {
+    Start_i <- GTF_df_UTR_i_ext$min_value
+  End_i <-  cDNA_targets_i_ext
+  
+  
+}
+
+#Write into new dataframe
+cDNA_targets_coord_add <- data.frame(ID = cDNA_targets_i$ID, Chromosome = cDNA_targets_i$Chromosome, Start = Start_i, End = End_i )
+cDNA_targets_coord <- rbind(cDNA_targets_coord, cDNA_targets_coord_add)
+
+}
+
+
+
+#Add column with width 
+
+
+cDNA_targets_coord$Width <- cDNA_targets_coord$End - cDNA_targets_coord$Start +1
+cDNA_targets_coord <- cDNA_targets_coord %>% dplyr::select(-"Width")
+
+cDNA_targets_coord_gr <- makeGRangesFromDataFrame(cDNA_targets_coord, keep.extra.columns = TRUE)
+
+
+export(cDNA_targets_coord_gr, "Input/CRISPRi_cDNA_TAP_REF_coord.bed", "bed")
+
+
+```
+
+
+#Check if there are any overlapping genes to each other - change if necessary
+
+```{r}
+
+
+cDNA_targets_gr_1 <- makeGRangesFromDataFrame(cDNA_targets_coord, keep.extra.columns = TRUE)
+cDNA_targets_gr_2 <- makeGRangesFromDataFrame(cDNA_targets_coord, keep.extra.columns = TRUE)
+
+
+
+Overlap <- countOverlaps(cDNA_targets_gr_1, cDNA_targets_gr_2)
+cDNA_targets_gr_1$count_overlaps <- Overlap
+cDNA_targets_df_1 <- as.data.frame(cDNA_targets_gr_1)
+
+
+
+#REMARK - manually change PSME1 and EMC9 reference - they overlap
+
+cDNA_targets_coord <- cDNA_targets_coord %>%
+  mutate(End = case_when(
+      ID == "PSME1" ~ 24138962,
+      TRUE ~ End  # Keep the original value for other rows
+    )
+  )
+
+
+
+cDNA_targets_coord <- cDNA_targets_coord %>%
+  mutate(Start = case_when(
+      ID == "EMC9" ~ 24138965,
+      TRUE ~ Start  # Keep the original value for other rows
+    )
+  )
+
+
+
+cDNA_targets_coord$Start <- as.integer(cDNA_targets_coord$Start)
+cDNA_targets_coord$End <- as.integer(cDNA_targets_coord$End)
+
+
+cDNA_targets_coord_gr <- makeGRangesFromDataFrame(cDNA_targets_coord, keep.extra.columns = TRUE)
+
+export(cDNA_targets_coord_gr, "Input/CRISPRi_cDNA_TAP_REF_coord.bed", "bed")
+
+
+#check overlap again
+
+
+cDNA_targets_gr_1 <- makeGRangesFromDataFrame(cDNA_targets_coord, keep.extra.columns = TRUE)
+cDNA_targets_gr_2 <- makeGRangesFromDataFrame(cDNA_targets_coord, keep.extra.columns = TRUE)
+
+
+
+Overlap <- countOverlaps(cDNA_targets_gr_1, cDNA_targets_gr_2)
+cDNA_targets_gr_1$count_overlaps <- Overlap
+cDNA_targets_df_1 <- as.data.frame(cDNA_targets_gr_1)
+
+#REMARK - correct now
+
+
+write.table(cDNA_targets_coord, file="Input/CRISPRi_cDNA_TAP_REF.tsv", quote = FALSE, row.names = FALSE, col.names = TRUE, sep = "\t")
+
+
+```
+
+
+
+#Get reference sequence
+
+
+```{r}
+
+
+library(BSgenome)
+library(Biostrings)
+library(dplyr)
+
+library(GenomicRanges)
+
+
+# human genome BSgenome object (needs to be istalled from Bioconductor)
+hg38 <- getBSgenome("BSgenome.Hsapiens.UCSC.hg38")
+
+
+cDNA_targets <- read.delim("Input/CRISPRi_cDNA_TAP_REF.tsv")
+
+cDNA_targets_seq <- data.frame()
+
+for (i in unique(cDNA_targets$ID)){
+  cDNA_targets_i <- cDNA_targets %>% dplyr::filter(cDNA_targets$ID == i)
+  cDNA_targets_dna_i <- as.character(Biostrings::getSeq(hg38, cDNA_targets_i$Chromosome, cDNA_targets_i$Start,	cDNA_targets_i$End))
+  cDNA_targets_dna_i_df <- data.frame(ID = i, Chromosome = cDNA_targets_i$Chromosome, Start = cDNA_targets_i$Start, End = cDNA_targets_i$End,  Sequence = cDNA_targets_dna_i)
+  cDNA_targets_seq <- rbind(cDNA_targets_seq, cDNA_targets_dna_i_df)
+}
+
+cDNA_targets_seq <- cDNA_targets_seq %>% dplyr::select(ID, Sequence)
+
+write.csv(cDNA_targets_seq, file = "Input/CRISPRi_cDNA_TAP_REF_seqs.csv", quote = FALSE, row.names = FALSE, col.names = TRUE)
+
+
+
+```
+
+
+
+
+
+
+
+
+
+

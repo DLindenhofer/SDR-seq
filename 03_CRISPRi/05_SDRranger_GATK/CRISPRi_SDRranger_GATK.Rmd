@@ -1,0 +1,954 @@
+---
+title: "20240208_SDR005_Run2_SDRranger_MonoVar"
+output: html_document
+date: "2024-02-08"
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+#Load packages and define file paths
+
+```{r}
+
+library(Seurat)
+library(dplyr)
+library(ggplot2)
+library(Matrix)
+library(reshape2)
+library(data.table)
+library(stringr)
+library(tidyr)
+library(scales)
+library(rtracklayer)
+library(here)
+library(data.table)
+library(readr)
+
+plot_save_dir <- here("Plots_dCas9_GATK")
+
+
+
+```
+
+## Read in data
+
+```{r}
+
+#Load in processed Seurat from cell filtering step
+
+#all cells 
+cDNA_data_Seurat <- readRDS(here("SDR001_dCas9_Plots/SDR001_dCas9_Seurat_filtered_clustered.rds"))
+
+#Load in variants file from GATK and VEP
+#Adjust skip according to vcf file - skip header
+
+all_var_full <- read_tsv(here("/06_GATK_VEP/SDR001_dCas9.vcf"), skip = 60, col_names = TRUE)
+
+#Fill in empty information properly 
+all_var_full <- all_var_full  %>% mutate(ID = ".", QUAL = ".", FILTER = ".", FORMAT = "GT:AD:DP:GQ:PL")
+
+```
+
+
+
+#Make metadata for genoytpes
+
+```{r}
+
+#Split for processing and adding
+
+#for metadata
+to_add <- all_var_full[,c(1:9)]
+
+#For variants
+all_var <- all_var_full[,c(10:length(all_var_full))]
+all_var <- as.data.table(all_var)
+
+
+#_________________________________________________________________________
+
+#Make metadata table for Genotypes
+
+#Split info column - only first row now extracted - multiple entries per gene 
+to_add_info <- lapply(to_add$INFO, function(x) unlist(strsplit(x, split = ",-")))
+to_add_info_split <- data.frame(do.call('rbind', strsplit(as.character(to_add_info),'|',fixed=TRUE)))
+to_add_info_split_for_merge <- data.frame(Consequence = to_add_info_split$X2, 
+                                          IMPACT=to_add_info_split$X3, 
+                                          SYMBOL=to_add_info_split$X4, 
+                                          Gene= to_add_info_split$X5, 
+                                          Feature_type =to_add_info_split$X6, 
+                                          BIOTYPE =to_add_info_split$X7, 
+                                          SNP_ID = to_add_info_split$X18)
+
+#Add to metadata
+to_add <- cbind(to_add, to_add_info_split_for_merge)
+
+
+
+Geno_meta <- to_add
+
+#Unique identifier for each variant
+#Modify Consequence string so its compatible with seurat later
+
+Geno_meta <- Geno_meta %>% mutate(Consequence = str_replace_all(Consequence, "_", ":"))
+Geno_meta <- Geno_meta %>% mutate(ID_Geno = str_c(SYMBOL, `#CHROM`, POS, REF, ALT, Consequence ,sep = "-"))
+
+
+#Annotate AMP_ID to each varint
+
+annot <- read.delim("REF_lists/SDR001_gDNA_targets_annotate.txt")
+
+
+Geno_meta_gr <- Geno_meta %>% select(Chromosome = `#CHROM`, Start = POS, END = POS, ID = ID_Geno)
+Geno_meta_gr <-  makeGRangesFromDataFrame(Geno_meta_gr, keep.extra.columns = TRUE)
+
+annot_gr <- annot %>% select(Chromosome, Start, End, ID = Amp_ID)
+annot_gr <- makeGRangesFromDataFrame(annot_gr, keep.extra.columns = TRUE)
+
+
+
+Overlap <- findOverlaps(Geno_meta_gr, annot_gr)
+#gene_names <- CharacterList(split(SDR005_hg38_MB_input_gr$Gene[subjectHits(Overlap)],queryHits(Overlap)))
+Gene<- split(annot_gr$ID[subjectHits(Overlap)], queryHits(Overlap))
+Gene <- CharacterList(split(annot_gr$ID[subjectHits(Overlap)], queryHits(Overlap)))
+
+mcols(Geno_meta_gr) <- DataFrame(mcols(Geno_meta_gr), Gene) 
+
+#Make dataframe
+Geno_meta_add <- Geno_meta_gr %>% as.data.frame() %>% tibble::as_tibble() 
+Geno_meta_add  <- unnest(Geno_meta_add, cols = Gene) %>% distinct() %>% select(ID, Amp_ID = Gene)
+Geno_meta <- Geno_meta %>% left_join(Geno_meta_add, by = c("ID_Geno" = "ID"))
+
+#Also add in target name
+annot_add <- annot %>% select(ID = Amp_ID, SNP_ID_annot = SNP_ID, Gene_annot = Gene)
+Geno_meta <- Geno_meta %>% left_join(annot_add, by = c("Amp_ID" = "ID"))
+
+#Unique identifier for each variant - modify with target_name from Julia and not with the one from VEP
+#Modify Consequence string so its compatible with seurat later
+
+
+Geno_meta <- Geno_meta %>% mutate(ID_Geno = str_c(Gene_annot, `#CHROM`, POS, REF, ALT, Consequence ,sep = "-"))
+
+
+
+```
+
+
+
+
+## Add full genotype data as an assay 
+0 (WT), 1 (HET), 2 (HOM) - rest of information as list in @misc slot
+No Cutoff first - do that in a second assay
+
+```{r}
+
+#For variants
+all_var <- all_var_full[,c(10:length(all_var_full))]
+all_var <- as.data.table(all_var)
+
+
+#_________________________________________________________________________
+#Genotype
+
+#Extract the genotype information from the filtered variant file
+#Get genotype
+extract_vcf_info <- function(x) {
+  sapply(strsplit(x, ":"), function(y) y[1])
+}
+
+all_var_GT <- all_var[, lapply(.SD, extract_vcf_info)]
+
+
+#Replace 0/1 with 1 , 1/1 with 2, NA with 0
+
+all_var_GT  <- all_var_GT %>%
+  mutate(across(everything(), ~ case_when(
+    . == "0/1" ~ "1",
+    . == "1/1" ~ "2",
+    TRUE ~ as.character(.)
+  ))) %>%
+  mutate(across(everything(), as.numeric)) %>%
+  mutate(across(everything(), ~ replace_na(., 0)))
+
+
+#Integreate 0/0 based on read coverage per cell 
+
+cut_off = 0 # no cutoff at this point
+
+gDNA_mat <- cDNA_data_Seurat@assays$gDNA$counts %>% as.data.frame()
+all.equal(colnames(gDNA_mat), colnames(all_var))
+
+gDNA_mat <- gDNA_mat %>% mutate(Amp_ID = rownames(gDNA_mat))
+
+#Get outline of Geno - information 
+
+gDNA_mat_mod <- data.frame(Amp_ID = Geno_meta$Amp_ID)
+
+gDNA_mat_mod <- gDNA_mat_mod %>% left_join(gDNA_mat, by = c("Amp_ID"))
+gDNA_mat_mod <- gDNA_mat_mod %>% select(-Amp_ID)
+rownames(gDNA_mat_mod) <- Geno_meta$ID_Geno
+
+
+gDNA_mat_mod_rep <- gDNA_mat_mod %>%   
+    mutate(across(everything(), ~ case_when(
+    . > cut_off ~ 0,
+    . <= cut_off ~ NA
+  )))
+
+
+#Combine both matrices for a full Genotype matrix - NAs introduced if not covered by cutoff
+all_var_GT <- as.matrix(all_var_GT) + as.matrix(gDNA_mat_mod_rep) %>% as.data.frame()
+rownames(all_var_GT ) <- Geno_meta$ID_Geno
+
+#Check order of cells again
+all.equal(colnames(all_var_GT), colnames(cDNA_data_Seurat))
+
+
+
+
+#_________________________________________________________________________
+#Read depth 
+
+#RD different in gDNA matrix and variant calling file 
+
+#Fore read depth
+extract_vcf_info <- function(x) {
+  sapply(strsplit(x, ":"), function(y) y[3])
+}
+
+all_var_DP <- all_var[, lapply(.SD, extract_vcf_info)]
+#all_var_DP <- cbind(to_add, all_var_DP)
+
+all_var_DP <- all_var_DP %>% 
+               mutate_all(as.numeric)
+
+#Make DF for addition to produce NA values in gDNA mat for values that need to be substituted with read depth from GATK vcf file
+
+all_var_DP_0 <- all_var_DP %>%
+  mutate_all(~ifelse(is.na(.), 0, .)) %>% #if NA then to 0
+  mutate_all(~ifelse(. > 0, NA, .)) %>% #if not 0 then NA
+  mutate_all(as.numeric)
+
+#Add this matrix with gDNA_mat_mod to produce NA values where read depth of DP should be - then add 0 there
+gDNA_mat_mod <- as.matrix(gDNA_mat_mod) + as.matrix(all_var_DP_0) %>% as.data.frame()
+
+#Make 0 in both for next addition to get rid of NA values
+gDNA_mat_mod <- gDNA_mat_mod %>%  mutate_all(~ifelse(is.na(.), 0, .))
+all_var_DP <- all_var_DP %>% mutate_all(~ifelse(is.na(.), 0, .)) 
+
+#Now add the DP matrix with it to retain the original DP read depth 
+all_var_DP <- as.matrix(gDNA_mat_mod) + as.matrix(all_var_DP) %>% as.data.frame()
+
+
+
+#_________________________________________________________________________
+#Calculate VAF with alternative reads
+
+#For allelic reads
+extract_vcf_info <- function(x) {
+  sapply(strsplit(x, ":"), function(y) y[2])
+}
+
+all_var_AD <- all_var[, lapply(.SD, extract_vcf_info)]
+
+ALT_reads <-  all_var_AD %>%
+         mutate_all(~sub(".*,", "", .)) %>%
+  mutate_all(as.numeric) %>% 
+  mutate_all(~ifelse(is.na(.), 0, .)) 
+
+
+VAF <- as.matrix(ALT_reads)/as.matrix(all_var_DP) %>% as.data.frame()  %>%  mutate_all(as.numeric) 
+
+
+#_________________________________________________________________________
+#Genotype Quality 
+
+
+#Fore Genotype Quality 
+extract_vcf_info <- function(x) {
+  sapply(strsplit(x, ":"), function(y) y[4])
+}
+
+all_var_GQ <- all_var[, lapply(.SD, extract_vcf_info)]
+#all_var_GQ <- cbind(to_add, all_var_GQ)
+
+all_var_GQ <- all_var_GQ %>% 
+               mutate_all(as.numeric) 
+
+
+#_________________________________________________________________________
+#Add to Seurat 
+
+#GT as assay
+#Geno_meta as metadata
+#rest of information (all_var, RD, VAF, GQ) as list
+
+all.equal(rownames(all_var_GT), Geno_meta$ID_Geno)
+all.equal(colnames(all_var_GT), colnames(cDNA_data_Seurat))
+
+
+#Make assay and add to Seurat
+GT_assay <- CreateAssay5Object(counts = as.sparse(all_var_GT))
+cDNA_data_Seurat[["Geno"]] <- GT_assay
+Assays(cDNA_data_Seurat)
+
+#Add metadata
+cDNA_data_Seurat@assays$Geno@meta.data <- Geno_meta
+
+
+#Make list for the rest of the information 
+all_var <- all_var %>% as.data.frame()
+rownames(all_var) <- Geno_meta$ID_Geno
+
+all_var_DP <- all_var_DP %>% as.data.frame()
+rownames(all_var_DP) <- Geno_meta$ID_Geno
+
+VAF <- VAF %>% as.data.frame()
+rownames(VAF) <- Geno_meta$ID_Geno
+
+
+
+all_var_GQ <- all_var_GQ %>% as.data.frame()
+rownames(all_var_GQ) <- Geno_meta$ID_Geno
+
+list_to_add <- list(full = all_var,
+                    DP = all_var_DP,
+                    VAF = VAF,
+                    GQ = all_var_GQ)
+
+#Add list to misc slot
+cDNA_data_Seurat@assays$Geno@misc <- list_to_add
+
+
+#Save again
+saveRDS(cDNA_data_Seurat, here("SDR001_dCas9_Geno_full.rds"))
+
+
+```
+
+
+#Apply filtering on read depth and GQ
+
+```{r}
+
+#Load data
+
+cDNA_data_Seurat <- readRDS(here("SDR001_dCas9_Geno_full.rds"))
+
+#Get all matrices
+GT_mat <- cDNA_data_Seurat@assays$Geno$counts %>% as.data.frame()
+Geno_meta <- cDNA_data_Seurat@assays$Geno@meta.data
+
+Geno_list <- cDNA_data_Seurat@assays$Geno@misc
+list2env(Geno_list, envir = .GlobalEnv)
+
+
+#Set cutoffs 
+
+cut_off_RD = 5
+cut_off_GQ = 30
+
+#Make RD cutoff - make data frame dataframe to produce NAs 
+DP_rep <- DP %>%   
+    mutate(across(everything(), ~ case_when(
+    . > cut_off_RD ~ 0,
+    . <= cut_off_RD ~ NA
+  )))
+
+#Make GQ cutoff - make data frame dataframe to produce NAs 
+
+GQ_rep <- GQ %>%
+  mutate(across(everything(), ~ case_when(
+    is.na(.) ~ 99,            #Set NAs to maximum value - no WT data integrated here
+    TRUE ~ as.numeric(.)
+  ))) %>%
+  mutate(across(everything(), ~ case_when(
+    . > cut_off_GQ ~ 0,
+    . <= cut_off_GQ ~ NA
+  )))
+
+
+#Add in all matrixes with GT to produce NAs 
+
+GT_mat_mod <- as.matrix(GT_mat) + as.matrix(DP_rep) + as.matrix(GQ_rep) %>% as.data.frame()
+
+
+#Add back into new assay
+
+
+#Make assay and add to Seurat
+GT_mod_assay <- CreateAssay5Object(counts = as.sparse(GT_mat_mod))
+cDNA_data_Seurat[["Geno_filtered"]] <- GT_mod_assay
+Assays(cDNA_data_Seurat)
+
+#Add metadata
+cDNA_data_Seurat@assays$Geno_filtered@meta.data <- Geno_meta
+
+#Add list data - unfiltered
+
+cDNA_data_Seurat@assays$Geno_filtered@misc <- Geno_list
+
+#Save again
+saveRDS(cDNA_data_Seurat, here("SDR001_dCas9_Geno_full.rds"))
+
+```
+
+
+
+#Plot all variants
+
+
+```{r}
+#Define what to plot 
+
+out_put_dir <- here("SDR001_dCas9_Plots_GATK/All_variants_plots")
+plot_genes <- rownames(cDNA_data_Seurat@assays$Geno_filtered)
+
+i=plot_genes[1]
+
+group_colors <- c("1/1" = "forestgreen", "0/1" = "cyan2", "0/0" = "dodgerblue3", "./." = "grey")
+
+for (i in unique(plot_genes)){
+umap_tx = cDNA_data_Seurat@reductions$umap@cell.embeddings %>% as.data.frame() %>%
+  cbind(Geno = cDNA_data_Seurat@assays$Geno_filtered$counts[i, ]) %>%
+  mutate(Genotype = case_when(Geno == NA ~ "./.",
+                              Geno == "0" ~ "0/0",
+                              Geno == "1" ~ "0/1",
+                              Geno == "2" ~ "1/1"))
+    p <-
+ggplot() + 
+  geom_point(data = umap_tx, aes(x=umap_1, y=umap_2, color = Genotype), size = 1, show.legend = TRUE) + 
+            scale_fill_manual(values = group_colors)+
+    scale_color_manual(values = group_colors)+
+  theme(plot.title = element_text(hjust=0.5, face="bold")) +
+  ggtitle(i)+
+  theme_classic()
+
+  ggsave(paste(i,"_dimplot.pdf",sep = ""), path = out_put_dir, plot = last_plot(), device = "pdf", scale = 1,
+         width = 15, height = 15, units = "cm", dpi = 300)
+    
+}
+
+p
+
+```
+
+
+
+
+#Plot some quality control plots - VAF vs read depth - add VAF as an assay 
+
+```{r}
+
+
+#Load data
+
+cDNA_data_Seurat <- readRDS(here("SDR001_dCas9_Geno_full.rds"))
+
+#Get all matrices
+GT_mat <- cDNA_data_Seurat@assays$Geno_filtered$counts %>% as.data.frame()
+Geno_meta <- cDNA_data_Seurat@assays$Geno_filtered@meta.data
+
+Geno_list <- cDNA_data_Seurat@assays$Geno_filtered@misc
+list2env(Geno_list, envir = .GlobalEnv)
+
+
+
+
+#_________________________________________________________________________
+#Respahe data for plotting
+
+#Genotype - still need to add in WT coverage !!! - done somewhat above already
+GT_mat <- GT_mat %>% t() %>% as.data.frame()
+GT_mat <- GT_mat %>% mutate(cell = rownames(GT_mat))
+GT_mat_res <- GT_mat %>% reshape2::melt(id.vars = c("cell"),
+                                        variable.name = "ID", 
+                                        value.name = "Genotype")
+
+
+#VAF
+VAF <- VAF %>% t() %>% as.data.frame()
+VAF <- VAF %>% mutate(cell = rownames(VAF))
+VAF_res <- VAF %>% reshape2::melt(id.vars = c("cell"),
+                                  variable.name = "ID", 
+                                  value.name = "VAF")
+
+
+
+#Read depth 
+DP <- DP %>% t() %>% as.data.frame()
+DP <- DP %>% mutate(cell = rownames(DP))
+DP_res <- DP %>% reshape2::melt(id.vars = c("cell"),
+                                variable.name = "ID", 
+                                value.name = "DP")
+
+
+
+
+#Genotype quality 
+GQ <- GQ  %>% t() %>% as.data.frame()
+GQ  <- GQ  %>% mutate(cell = rownames(GQ))
+GQ_res <- GQ  %>% reshape2::melt(id.vars = c("cell"),
+                                variable.name = "ID", 
+                                value.name = "GQ")
+
+
+
+#Join in all of them 
+
+Combined_VAF_to_plot <- GT_mat_res %>% left_join(VAF_res, by = c("cell" = "cell", "ID" = "ID"))
+Combined_VAF_to_plot <- Combined_VAF_to_plot %>% left_join(DP_res, by = c("cell" = "cell", "ID" = "ID"))
+Combined_VAF_to_plot <- Combined_VAF_to_plot %>% left_join(GQ_res, by = c("cell" = "cell", "ID" = "ID"))
+
+
+unique(Combined_VAF_to_plot$Genotype)
+#Filter out NA values - change later 
+
+#Combined_VAF_to_plot <- Combined_VAF_to_plot %>% filter(!is.na(Genotype))
+Combined_VAF_to_plot$Genotype <- factor(Combined_VAF_to_plot$Genotype, levels = c(2, 1, 0, NA))
+
+
+#_________________________________________________________________________
+#Plot VAF vs read depth - Color genotype
+
+out_put_dir <- here("SDR001_dCas9_Plots_GATK/All_variants_VAF_plots")
+plot_genes <- unique(Combined_VAF_to_plot$ID)
+
+
+
+i=plot_genes[1]
+
+#group_colors <- c("1/1" = "forestgreen", "0/1" = "cyan2", "0/0" = "dodgerblue3", "./." = "grey")
+group_colors <- c("2" = "forestgreen", "1" = "cyan2", "0" = "dodgerblue3", "NA" = "grey")
+
+
+for (i in unique(plot_genes)){
+  Df_to_plot_i <- Combined_VAF_to_plot %>% filter(ID == i)
+  
+  p1 <-   Df_to_plot_i %>%
+    ggplot(aes(x=VAF, y=DP, color=Genotype)) + 
+  	geom_point(size = 4) + 
+	#scale_colour_gradient(low = "gray90", high = "#990000", limits = c(0,1)) +
+  #xlim(c(0,30))+
+    #ylim(c(0,30))+
+    scale_color_manual(values = group_colors )+
+  	scale_x_continuous(limits = c(0,1)) + 
+  	scale_y_log10(limits = c(1,1000)) + 
+  	theme_classic() +
+  	#geom_vline(xintercept = 10) +
+  	#geom_hline(yintercept = 10) +
+    	theme(plot.title = element_text(hjust=0.5, face="bold")) +
+  	ggtitle(i)
+  
+  
+  p2 <- Df_to_plot_i %>%
+    ggplot(aes(x=VAF, y=DP, color=GQ)) + 
+  	geom_point(size = 4) + 
+	scale_colour_gradient(low = "gray90", high = "#990000", limits = c(1,99)) +
+  #xlim(c(0,30))+
+    #ylim(c(0,30))+
+    #scale_color_manual(values = group_colors )+
+  	scale_x_continuous(limits = c(0,1)) + 
+  	scale_y_log10(limits = c(1,1000)) + 
+  	theme_classic() +
+  	#geom_vline(xintercept = 10) +
+  	#geom_hline(yintercept = 10) +
+    	theme(plot.title = element_text(hjust=0.5, face="bold")) +
+  	ggtitle(i)
+  
+p <- p1 + p2
+  
+
+  ggsave(paste(i,".pdf",sep = ""), path = out_put_dir, plot = p, device = "pdf", scale = 1,
+         width = 30, height = 15, units = "cm", dpi = 300)
+    
+}
+
+p
+
+
+```
+
+
+
+
+#Do statistical testing gRNA vs target gene
+
+
+```{r}
+
+
+#Load data
+
+cDNA_data_Seurat <- readRDS(here("SDR001_dCas9_Geno_full.rds"))
+
+metadata <- cDNA_data_Seurat@meta.data
+
+#Fix CROP assignment - apply filters
+cut_off_CROP_ratio = 0.75
+cut_off_CROP_reads = 50
+
+
+metadata <- metadata %>%
+  mutate(CROP_assigned_filt = if_else(CROP_n_reads_sum >= cut_off_CROP_reads & CROP_ratio >= cut_off_CROP_ratio, CROP_assigned, NA))
+
+
+to_loop <- unique(metadata$CROP_assigned)
+
+
+RNA_mat <- cDNA_data_Seurat@assays$RNA$data %>% t() %>% as.data.frame() %>% exp() -1
+#RNA_mat <- cDNA_data_Seurat@assays$RNA$data %>% t() %>% as.data.frame() 
+rowSums(RNA_mat)
+
+
+#double check logFC calculation - slightly off somehow in FindMarkers? 
+
+test= "STAU1"
+RNA_mat_test <- RNA_mat %>% select(test)
+
+RNA_mat_pert <- RNA_mat_test[cell_i_pert,]
+#RNA_mat_pert <- RNA_mat_pert[RNA_mat_pert != 0]
+
+RNA_mat_ctrl <- RNA_mat_test[cell_i_ctrl,]
+#RNA_mat_ctrl <- RNA_mat_ctrl[RNA_mat_ctrl != 0]
+
+avg_pert <- mean(RNA_mat_pert)
+avg_ctrl <- mean(RNA_mat_ctrl)
+
+LFC <- log2(avg_pert/avg_ctrl)
+
+
+
+
+
+i = to_loop[2]
+i = "25_CROP_nC4_dCas9"
+
+#Set up variables
+
+DE_test_out <- list()
+N_control_cells = 1500
+
+#loop
+
+for (i in unique(to_loop)) {
+  tryCatch({
+
+
+#Select cells 
+    
+cell_i_pert <- metadata %>% filter(CROP_assigned_filt == i) %>% select(cell) %>% pull(1)
+cell_i_ctrl <- metadata %>% filter(CROP_assigned_filt != i) %>% select(cell) %>% pull(1) %>% sample(size = N_control_cells, replace = FALSE)
+    
+counts_pert <- length(cell_i_pert)
+counts_ctrl <- length(cell_i_ctrl)
+
+
+#Run differential testing 
+    
+test_result_i <- FindMarkers(object = cDNA_data_Seurat, assay = "RNA", slot = "data", ident.1 = cell_i_pert, ident.2 = cell_i_ctrl, test.use = "MAST", min.pct = 0, logfc.threshold = 0)
+
+
+#Add information to output
+
+test_result_i  <- test_result_i  %>% 
+                   mutate(Test = "MAST",
+                          ID_pert = i,
+                          Ncells_pert = counts_pert, 
+                          Ncells_ctrl = counts_ctrl,
+                          Gene = rownames(test_result_i))
+
+#Add list to ouput
+DE_test_out[[i]] <- bind_rows(test_result_i)
+
+
+  
+  }, error = function(e) {
+    # This function is called if an error occurs
+    message(paste("Error in iteration", i, ":", e$message))
+    # Optionally, you can do other error handling here
+  })
+}
+
+# Combine all test results into a single dataframe
+DE_test_out <- bind_rows(DE_test_out)
+
+write.csv(DE_test_out, file = here("SDR001_dCas9_DE_test_out_V1.csv"), quote = FALSE, row.names = FALSE, col.names = TRUE)
+
+
+```
+
+
+#Visualize DE testing ouput 
+
+```{r}
+
+DE_test_out <- read.csv(here("SDR001_dCas9_DE_test_out_V1.csv"))
+
+#Add some information 
+DE_test_out <-  DE_test_out %>% mutate(guide_target = sub(".+_CROP_([[:alnum:]]+)_.+", "\\1", ID_pert)) %>% 
+  mutate(intended_target = Gene == guide_target) %>%
+  mutate(significant = p_val_adj < 0.05)
+
+DE_test_out <- DE_test_out %>%
+  mutate(target_name = sub(".+_CROP_(.+)_[dCas9|PE].*", "\\1", ID_pert),
+         target_type = case_when(
+           grepl("rs.+", target_name) ~ "SNP",
+           grepl("_control$", target_name) ~ "control_PE",
+           grepl("nC.+", target_name) ~ "negative_control",
+           TRUE ~ "TSS"
+         ))
+
+
+#For highlighting in plot
+
+DE_test_out <- DE_test_out %>% mutate(target_type_plot = case_when(target_type == "neagtive_control" & significant == TRUE ~ "negative_control",
+                                                           target_type == "TSS" & significant == TRUE ~ "TSS",
+                                                           target_type == "SNP" & significant == TRUE ~ "SNP",
+                                                           target_type == "control_PE" & significant == TRUE ~ "control_PE"))
+
+#Filter out cells with low coverage
+
+intended_nc <- DE_test_out %>%
+  filter((intended_target == TRUE | target_type == "negative_control")) %>%
+  filter(Ncells_pert >= 10) %>%
+  filter(pct.1 > 0.25 & 
+         pct.2 > 0.25)
+                         
+
+test <- intended_nc %>% filter(target_type == "SNP")
+
+max_lfc <- max(abs(intended_nc$avg_log2FC), na.rm = TRUE)
+
+# Define the order of levels for target_type
+target_type_order <- c("negative_control", "TSS", "SNP", "control_PE")
+
+#group_colors = c("negative_control" = "#B0C5A4", "TSS" = "#D37676", "SNP" = "#EBC49F", "control_PE" = "#F1EF99")
+
+group_colors = c("negative_control" = "#337357", "TSS" = "#EE4266", "SNP" = "#5E1675", "control_PE" = "#FFD23F")
+
+# Set the levels of target_type with the desired order
+intended_nc$target_type <- factor(intended_nc$target_type, levels = target_type_order)
+
+title = "Volcano_plot_for_figure.pdf"
+p <- ggplot(intended_nc, aes(x = avg_log2FC, y = -log10(p_val_adj), color = target_type_plot)) +
+  facet_wrap(~target_type, ncol = 4) +
+  geom_point(size = 7) +
+  geom_hline(yintercept = -log10(0.05), linetype = "dashed") + 
+  geom_vline(xintercept = 0, linetype = "dashed") +
+  scale_color_manual(values = group_colors) +
+  scale_x_continuous(limits = c(-max_lfc, max_lfc)) +
+  scale_y_continuous(limits = c(0,300))+
+  labs(title = title, y = "-log10(adj. p-value)") +
+  theme_classic()+
+  guides(fill = "none", color = "none")
+
+
+p
+
+ggsave(filename = title, path = here("SDR001_dCas9_Plots_GATK"), plot = p, device = "pdf", scale = 1,
+       width = 55, height = 15, units = "cm", dpi = 300)
+p
+
+
+
+```
+
+
+#Plot coverage of gRNAs per cell identified
+
+
+
+```{r}
+library(Rmisc)
+library(here)
+
+results_coverage <- DE_test_out %>% 
+                    select(ID_pert, Ncells_pert, target_type) %>% 
+                    distinct() %>% 
+                    mutate(Coverage = "Coverage") %>%
+                    filter(Ncells_pert >= 10)
+
+results_coverage_summ <- summarySE(results_coverage, measurevar = "Ncells_pert", groupvars = "Coverage")
+
+
+title = "Coverage_per_gRNA_diff_exp_testing.pdf"
+
+
+p <- results_coverage  %>%
+   ggplot(aes(x=Coverage, y=Ncells_pert ))+
+  stat_summary(fun.y = mean, geom = "bar", alpha = 0.8) +
+    geom_jitter(aes(color=target_type), width = 0.25, size = 7, show.legend = FALSE)+
+    stat_summary(fun.data = mean_se,geom = "errorbar", width = 0.25, size = 1)+
+  scale_color_manual(values = group_colors)+
+  ggtitle(title)+
+  theme_classic()
+                 
+detach("package:Rmisc", unload=TRUE)
+detach("package:plyr", unload=TRUE)
+
+ggsave(filename = title, path = here::here("SDR001_dCas9_Plots_GATK"), plot = p, device = "pdf", scale = 1,
+       width = 5, height = 15, units = "cm", dpi = 300)
+p
+
+
+```
+
+
+
+#Determine distance to TSS for SNP targets
+
+
+```{r}
+
+distance_df <- read.delim(here::here("REF_lists/SDR001_gRNA_chromosomal_location_CRISPRick.txt"), header = TRUE)
+
+distance_df <- distance_df %>%
+mutate(target_name = sub(".+_CROP_(.+)_[dCas9|PE].*", "\\1", ID),
+         target_type = case_when(
+           grepl("rs.+", target_name) ~ "SNP",
+           grepl("_control$", target_name) ~ "control_PE",
+           grepl("nC.+", target_name) ~ "negative_control",
+           TRUE ~ "TSS"
+         ))
+
+distance_df <- distance_df %>% dplyr::select(target_name, Distance, Distance_stranded, pert_chr, pert_start, pert_end)
+
+
+#Join in distance info to intended targets
+
+intended <- DE_test_out %>%
+  filter((intended_target == TRUE)) %>%
+  filter(Ncells_pert >= 10) %>%
+  filter(pct.1 > 0.25 & 
+         pct.2 > 0.25)
+
+
+intended <- intended %>% 
+            left_join(distance_df, by = "target_name")
+ 
+
+# Define the order of levels for target_type
+target_type_order <- c("TSS", "SNP", "control_PE")
+
+# Set the levels of target_type with the desired order
+intended$target_type <- factor(intended$target_type, levels = target_type_order)
+group_colors = c("negative_control" = "#337357", "TSS" = "#EE4266", "SNP" = "#5E1675", "control_PE" = "#FFD23F")
+
+
+max_distance <- max(intended$distance, na.rm = TRUE)
+
+title = "Distance_vs_significance_intended_targets_cut_2000_bp.pdf"
+p <- ggplot(intended, aes(x = Distance_stranded, y = -log10(p_val_adj), color = target_type_plot)) +
+  facet_wrap(~target_type, ncol = 3) +
+  geom_point(size = 7) +
+  geom_hline(yintercept = -log10(0.05), linetype = "dashed") + 
+  geom_vline(xintercept = 0, linetype = "dashed") +
+  scale_color_manual(values = group_colors) +
+  #scale_x_continuous(limits = c(0, max_distance)) +
+  scale_x_continuous(limits = c(-2000, 2000)) +
+  scale_y_continuous(limits = c(0,300))+
+  #scale_x_continuous(limits = c(-5000, 5000)) +  
+  labs(title = title, y = "-log10(adj. p-value)") +
+  theme_classic()
+
+p
+
+ggsave(filename = title , path = here::here("SDR001_dCas9_Plots_GATK"), plot = p, device = "pdf", scale = 1,
+       width = 40, height = 15, units = "cm", dpi = 300)
+
+
+
+
+
+
+```
+
+
+#Make distance plot - version 2
+
+
+
+```{r}
+
+title = "Distance_vs_logFC_intended_targets_size_P-val_no_cut_2000bp.pdf"
+
+
+p <- intended %>%
+  ggplot(aes(x = Distance_stranded, y = avg_log2FC, color = target_type_plot, size = -log10(p_val_adj))) +
+  facet_wrap(~target_type, ncol = 3) +
+  geom_point() +
+  scale_size_continuous(range = c(5,12))+
+  geom_hline(yintercept = 0, linetype = "dashed") + 
+  geom_vline(xintercept = 0, linetype = "dashed") +
+  scale_color_manual(values = group_colors) +
+  scale_y_continuous(limits = c(-3.5, 3.5)) +
+  #scale_x_continuous(limits = c(-8000, 8000)) +
+  scale_x_continuous(limits = c(-2000, 2000)) +  
+  labs(title = title, y = "logFC") +
+  theme_classic()
+
+p
+
+ggsave(filename = title, path = here::here("SDR001_dCas9_Plots_GATK"), plot = p, device = "pdf", scale = 1,
+       width = 40, height = 15, units = "cm", dpi = 300)
+
+
+
+SNP_significant <- intended %>% dplyr::filter(target_type_plot == "SNP")
+
+
+```
+
+
+
+
+
+#Make plot for assigning cells to gRNAs
+
+```{r}
+
+
+metadata <- cDNA_data_Seurat@meta.data
+
+
+metadata <- metadata %>%
+  mutate(CROP_assigned_sel = if_else(CROP_n_reads_sum >= cut_off_CROP_reads & CROP_ratio >= cut_off_CROP_ratio, "SELECTED", "NOT_SELECTED"))
+
+group_colors = c("NOT_SELECTED" =  "gray90" , "SELECTED" = "#990000")
+title = "CROP_gRNA_assignment.pdf"
+p <- metadata %>% 
+  	ggplot(aes(x=CROP_ratio, y=CROP_n_reads_sum, color=CROP_assigned_sel)) + 
+  	geom_point(size = 3, alpha = 0.6) + 
+  scale_color_manual(values = group_colors) +
+  #xlim(c(0,30))+
+    #ylim(c(0,30))+
+  	scale_x_continuous(limits = c(0,1)) + 
+  	scale_y_log10(limits = c(1,10000)) + 
+  	theme_classic() +
+  	#geom_vline(xintercept = 10) +
+  	#geom_hline(yintercept = 10) +
+    	theme(plot.title = element_text(hjust=0.5, face="bold")) +
+    	#facet_wrap(~Type)+
+  	ggtitle(title)+    
+    guides(fill = "none", color = "none")
+
+
+p
+
+ggsave(filename = title, path = here::here("SDR001_dCas9_Plots_GATK"), plot = p, device = "pdf", scale = 1,
+       width = 15, height = 15, units = "cm", dpi = 300)
+
+```
+
+
+
+
+
+
+
+
+
+

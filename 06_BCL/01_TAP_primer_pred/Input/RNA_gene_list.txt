@@ -1,0 +1,309 @@
+Gene	Selection	Gene_found
+IGHD	Maturation Marker	Found
+IGHM	Maturation Marker	Found
+TCL1A	Maturation Marker	Found
+SELL	Maturation Marker	Found
+CD1C	Maturation Marker	Found
+CXCR5	Maturation Marker	Found
+MME	Maturation Marker	Found
+BCL6	Maturation Marker	Found
+CCNB1	Maturation Marker	Found
+AICDA	Maturation Marker	Found
+CAMK1	Maturation Marker	Found
+CD72	Maturation Marker	Found
+MS4A1	Maturation Marker	Found
+PTPN6	Maturation Marker	Found
+SLA	Maturation Marker	Found
+FCRL2	Maturation Marker	Found
+CFLAR	Maturation Marker	Found
+FOXP1	Maturation Marker	Found
+CD83	Maturation Marker	Found
+EBI3	Maturation Marker	Found
+BTK	Maturation Marker	Found
+BLK	Maturation Marker	Found
+CD74	Maturation Marker	Found
+BLNK	Maturation Marker	Found
+CD40	Maturation Marker	Found
+NFKB1	Maturation Marker	Found
+NFKB2	Maturation Marker	Found
+TRAF1	Maturation Marker	Found
+ICAM1	Maturation Marker	Found
+REL	Maturation Marker	Found
+RELB	Maturation Marker	Found
+BACH2	Maturation Marker	Found
+CCR6	Maturation Marker	Found
+GPR183	Maturation Marker	Found
+TNFRSF17	Maturation Marker	Found
+IRF4	Maturation Marker	Found
+PRDM1	Maturation Marker	Found
+CD38	Maturation Marker	Found
+FAS	Maturation Marker	Found
+IGHG1	Maturation Marker	Found
+IGHA1	Maturation Marker	Found
+IGHE	Maturation Marker	Found
+CXCR3	Maturation Marker	Found
+IGLC2	Maturation Marker	Found
+IGKC	Maturation Marker	Found
+FCER2	DE Testing	Found
+CD27	DE Testing	Found
+TMSB10	DE Testing	Found
+BTG1	DE Testing	Found
+CXCR4	DE Testing	Found
+AIM2	DE Testing	Found
+PLPP5	DE Testing	Found
+STMN1	DE Testing	Found
+HMGB1	DE Testing	Found
+H2AZ1	DE Testing	Found
+HMGB2	DE Testing	Found
+H2AZ2	DE Testing	Found
+HMGN2	DE Testing	Found
+GAPDH	DE Testing	Found
+TUBB	DE Testing	Found
+TUBA1B	DE Testing	Found
+PCLAF	DE Testing	Found
+ANP32B	DE Testing	Found
+PRDX1	DE Testing	Found
+ACTB	DE Testing	Found
+ACTG1	DE Testing	Found
+PFN1	DE Testing	Found
+CFL1	DE Testing	Found
+LCP1	DE Testing	Found
+YBX1	DE Testing	Found
+RAN	DE Testing	Found
+ACTR3	DE Testing	Found
+LINC01781	DE Testing	Found
+MZB1	DE Testing	Found
+XBP1	DE Testing	Found
+SSR4	DE Testing	Found
+TXNDC5	DE Testing	Found
+FKBP11	DE Testing	Found
+DERL3	DE Testing	Found
+PRDX4	DE Testing	Found
+SEC11C	DE Testing	Found
+HSP90B1	DE Testing	Found
+JCHAIN	DE Testing	Found
+HSPA6	Variable Feature	Found
+CCL17	Variable Feature	Found
+H1-5	Variable Feature	Found
+MIR155HG	Variable Feature	Found
+HSPA1A	Variable Feature	Found
+TK1	Variable Feature	Found
+APOD	Variable Feature	Found
+FBP1	Variable Feature	Found
+IGLC6	Variable Feature	Found
+TNF	Variable Feature	Found
+CCL22	Variable Feature	Found
+ASPM	Variable Feature	Found
+UBE2C	Variable Feature	Found
+H4C3	Variable Feature	Found
+GBP1	Variable Feature	Found
+CENPF	Variable Feature	Found
+IL4I1	Variable Feature	Found
+BATF	Variable Feature	Found
+CDC20	Variable Feature	Found
+CRIP1	Variable Feature	Found
+DCN	Variable Feature	Found
+IFI27	Variable Feature	Found
+HSPA1B	Variable Feature	Found
+CXCL10	Variable Feature	Found
+CYTOR	Variable Feature	Found
+DUSP2	Variable Feature	Found
+PIF1	Variable Feature	Found
+TOP2A	Variable Feature	Found
+IGLC1	Variable Feature	Found
+PLK1	Variable Feature	Found
+TUBA1C	Variable Feature	Found
+AHNAK	Variable Feature	Found
+CCNB2	Variable Feature	Found
+ID2	Variable Feature	Found
+CENPE	Variable Feature	Found
+MKI67	Variable Feature	Found
+SH3TC1	Variable Feature	Found
+HMMR	Variable Feature	Found
+GNG8	Variable Feature	Found
+EMP3	Variable Feature	Found
+DEPP1	Variable Feature	Found
+AURKA	Variable Feature	Found
+KPNA2	Variable Feature	Found
+BIRC5	Variable Feature	Found
+EGR1	Variable Feature	Found
+LMO2	Variable Feature	Found
+IGLC3	Variable Feature	Found
+MIR4435-2HG	Variable Feature	Found
+G0S2	Variable Feature	Found
+IGLC7	Variable Feature	Found
+RRM2	Variable Feature	Found
+CD9	Variable Feature	Found
+DEPDC1	Variable Feature	Found
+TPX2	Variable Feature	Found
+H2AC16	Variable Feature	Found
+ARL6IP1	Variable Feature	Found
+NEK2	Variable Feature	Found
+TNFRSF13B	Variable Feature	Found
+BCL2A1	Variable Feature	Found
+CENPA	Variable Feature	Found
+KLF2	Variable Feature	Found
+PTTG1	Variable Feature	Found
+IFI30	Variable Feature	Found
+DLGAP5	Variable Feature	Found
+GADD45B	Variable Feature	Found
+H3C8	Variable Feature	Found
+BATF3	Variable Feature	Found
+SGK1	Variable Feature	Found
+NUF2	Variable Feature	Found
+H3C4	Variable Feature	Found
+SLAMF1	Variable Feature	Found
+TROAP	Variable Feature	Found
+KIF14	Variable Feature	Found
+CDK1	Variable Feature	Found
+KCNK12	Variable Feature	Found
+SLC2A3	Variable Feature	Found
+CDKN1C	Variable Feature	Found
+IGF1	Variable Feature	Found
+IL7R	Variable Feature	Found
+MEF2B	Variable Feature	Found
+CDKN3	Variable Feature	Found
+TUBB2A	Variable Feature	Found
+IER5	Variable Feature	Found
+LGALS1	Variable Feature	Found
+CCNA2	Variable Feature	Found
+H2AC20	Variable Feature	Found
+CHI3L2	Variable Feature	Found
+H3C2	Variable Feature	Found
+LTB	Variable Feature	Found
+H2AC12	Variable Feature	Found
+CH25H	Variable Feature	Found
+P2RY13	Variable Feature	Found
+H1-3	Variable Feature	Found
+MXD3	Variable Feature	Found
+GTSE1	Variable Feature	Found
+TNFAIP2	Variable Feature	Found
+NUSAP1	Variable Feature	Found
+TRIB3	Variable Feature	Found
+CXCL9	Variable Feature	Found
+H2BC9	Variable Feature	Found
+RASD1	Variable Feature	Found
+ACY3	Variable Feature	Found
+C16orf74	Variable Feature	Found
+HLA-DQB1	Variable Feature	Found
+WNT11	Variable Feature	Found
+FAM111B	Variable Feature	Found
+GNG11	Variable Feature	Found
+CD70	Variable Feature	Found
+AURKB	Variable Feature	Found
+S100A10	Variable Feature	Found
+CORO1A	Variable Feature	Found
+RNASE4	Variable Feature	Found
+TNFSF9	Variable Feature	Found
+RASL11A	Variable Feature	Found
+RGCC	Variable Feature	Found
+PRC1	Variable Feature	Found
+CDCA8	Variable Feature	Found
+FSTL3	Variable Feature	Found
+SERPINF1	Variable Feature	Found
+SUGCT	Variable Feature	Found
+TSPYL2	Variable Feature	Found
+S100A1	Variable Feature	Found
+CCL4L2	Variable Feature	Found
+CDCA3	Variable Feature	Found
+TXNIP	Variable Feature	Found
+CCDC144A	Variable Feature	Found
+RPL22L1	Variable Feature	Found
+EVA1B	Variable Feature	Found
+TUBB4B	Variable Feature	Found
+AKAP12	Variable Feature	Found
+UBE2S	Variable Feature	Found
+ISG15	Variable Feature	Found
+SUSD3	Variable Feature	Found
+ANG	Variable Feature	Found
+KIF2C	Variable Feature	Found
+CKS2	Variable Feature	Found
+TFPI2	Variable Feature	Found
+RGS1	Variable Feature	Found
+KIF23	Variable Feature	Found
+CETP	Variable Feature	Found
+IGLL1	Variable Feature	Found
+OSTN	Variable Feature	Found
+STAG3	Variable Feature	Found
+GBP4	Variable Feature	Found
+H3C7	Variable Feature	Found
+FCMR	Variable Feature	Found
+MT1E	Variable Feature	Found
+H1-0	Variable Feature	Found
+PTMS	Variable Feature	Found
+LINC02901	Variable Feature	Found
+UBE2L6	Variable Feature	Found
+IFI44L	Variable Feature	Found
+TMEM106C	Variable Feature	Found
+COTL1	Variable Feature	Found
+CEP55	Variable Feature	Found
+ATF5	Variable Feature	Found
+NDC80	Variable Feature	Found
+CDCA2	Variable Feature	Found
+MT2A	Variable Feature	Found
+FAU	Housekeeping Gene	Found
+RPS15	Housekeeping Gene	Found
+RPL28	Housekeeping Gene	Found
+RPL41	Housekeeping Gene	Found
+RPL18	Housekeeping Gene	Found
+RPL13	Housekeeping Gene	Found
+RPL19	Housekeeping Gene	Found
+RPLP2	Housekeeping Gene	Found
+UBA52	Housekeeping Gene	Found
+RPL37	Housekeeping Gene	Found
+RPS15A	Housekeeping Gene	Found
+RPLP1	Housekeeping Gene	Found
+RPS25	Housekeeping Gene	Found
+RPL35A	Housekeeping Gene	Found
+RPL11	Housekeeping Gene	Found
+RPL30	Housekeeping Gene	Found
+RPS23	Housekeeping Gene	Found
+RPL26	Housekeeping Gene	Found
+RPL7A	Housekeeping Gene	Found
+RPS14	Housekeeping Gene	Found
+IGHV1-69	DNA_panel	Found
+BCL2	DNA_panel	Found
+MYC	DNA_panel	Found
+TNFRSF14	DNA_panel	Found
+TP53	DNA_panel	Found
+IGHG3	DNA_panel	Found
+IGHV4-31	DNA_panel	Found
+IGLL5	DNA_panel	Found
+VMA21	DNA_panel	Found
+DTX1	DNA_panel	Found
+IGHV3-23	DNA_panel	Found
+IGHV4-39	DNA_panel	Found
+KMT2D	DNA_panel	Found
+IGHV2-70	DNA_panel	Found
+H2BC17	DNA_panel	Found
+IGLV3-1	DNA_panel	Found
+IGHV3-43	DNA_panel	Found
+H2BC10	DNA_panel	Found
+IGLV5-48	DNA_panel	Found
+IGHG2	DNA_panel	Found
+IGHV3-21	DNA_panel	Found
+IGHV3-48	DNA_panel	Found
+EP300	DNA_panel	Found
+H2BC21	DNA_panel	Found
+CREBBP	DNA_panel	Found
+IGKV4-1	DNA_panel	Found
+ATM	DNA_panel	Found
+POU2AF1	DNA_panel	Found
+IGHV4-34	DNA_panel	Found
+IGHV3-35	DNA_panel	Found
+PAX5	DNA_panel	Found
+BTG2	DNA_panel	Found
+EBF1	DNA_panel	Found
+ZNF608	DNA_panel	Found
+ETS1	DNA_panel	Found
+RRAGC	DNA_panel	Found
+SOCS1	DNA_panel	Found
+IGKV1-5	DNA_panel	Found
+H1-2	DNA_panel	Found
+TBL1XR1	DNA_panel	Found
+IGLJ3	DNA_panel	Found
+H1-4	DNA_panel	Found
+H2BC4	DNA_panel	Found
+IGHV2-5	DNA_panel	Found
+IGKV3-20	DNA_panel	Found
+PIM1	DNA_panel	Found

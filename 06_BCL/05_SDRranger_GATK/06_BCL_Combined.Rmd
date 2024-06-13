@@ -1,0 +1,685 @@
+---
+title: "20230829_SDR001_Comparison"
+author: "Dominik Lindenhofer"
+date: "2023-08-29"
+output: html_document
+---
+
+```{r}
+
+```
+
+##  Load libraries
+
+
+```{r}
+
+library(Seurat)
+library(dplyr)
+library(ggplot2)
+library(Matrix)
+library(reshape2)
+library(data.table)
+library(stringr)
+library(tidyr)
+library(scales)
+library(rtracklayer)
+library(data.table)
+library(readr)
+
+
+
+```
+
+#Load both fully annotated Seurats
+
+```{r}
+
+cDNA_Run1_data_Seurat <-readRDS("SDR005_Run1_Plots/SDR005_Run1_Seurat_filtered_clustered.rds")
+cDNA_Run2_data_Seurat <-readRDS("SDR005_Run2_Plots/SDR005_Run2_Seurat_filtered_clustered.rds")
+
+#Merge the 2 seurats
+
+cDNA_data_Seurat <-merge(cDNA_Run1_data_Seurat, cDNA_Run2_data_Seurat, project = "SDR005")
+
+metadata <- cDNA_data_Seurat@meta.data
+metadata$cell_merge <- rownames(metadata)
+
+cDNA_data_Seurat@assays$RNA <- JoinLayers(cDNA_data_Seurat)
+cDNA_data_Seurat@assays$gDNA <- JoinLayers(cDNA_data_Seurat@assays$gDNA )
+
+
+#Make new Seurat with combined data - merge somehow gives an issue
+
+RNA_mat <- cDNA_data_Seurat@assays$RNA@assays$RNA$counts %>% as.data.frame()
+all.equal(colnames(RNA_mat), metadata$cell_merge )
+gDNA_mat <- cDNA_data_Seurat@assays$gDNA$counts
+all.equal(colnames(gDNA_mat), metadata$cell_merge )
+
+
+#Make Seurat
+cDNA_data_Seurat <- CreateSeuratObject(RNA_mat, project = "SDR005")
+
+#Add metadata
+all.equal(colnames(cDNA_data_Seurat), rownames(metadata))
+cDNA_data_Seurat <- AddMetaData(object = cDNA_data_Seurat, metadata = metadata)
+
+
+#Add gDNA as an assay
+
+
+#Make assay and add to Seurat
+gDNA_assay <- CreateAssay5Object(counts = as.sparse(gDNA_mat))
+cDNA_data_Seurat[["gDNA"]] <- gDNA_assay
+Assays(cDNA_data_Seurat)
+
+
+#Prepare cell names for renaming
+cells_Run1 <- metadata %>% filter(orig.ident == "SDR005_Run1") %>% select(cell_merge) %>% pull(1)
+cells_Run2 <- metadata %>% filter(orig.ident == "SDR005_Run2") %>% select(cell_merge) %>% pull(1)
+
+cells_check_Run1 <- metadata %>% filter(orig.ident == "SDR005_Run1") %>% select(cell) %>% pull(1)
+cells_check_Run2 <- metadata %>% filter(orig.ident == "SDR005_Run2") %>% select(cell) %>% pull(1)
+
+#Load all variants again 
+
+#Run1
+
+all_var_full_Run1 <- read_tsv("SDR005_Run1_Plots/06_GATK_VEP/SDR005_Run1.vcf", skip = 118, col_names = TRUE)
+#Fill in empty information properly 
+all_var_full_Run1 <- all_var_full_Run1  %>% mutate(ID = ".", QUAL = ".", FILTER = ".", FORMAT = "GT:AD:DP:GQ:PL")
+
+#Rename cells to have suffix like in merged seurat
+to_add_Run1 <- all_var_full_Run1[,c(1:9)]
+all_var_Run1 <- all_var_full_Run1[,c(10:length(all_var_full_Run1))]
+all.equal(colnames(all_var_Run1), cells_check_Run1)
+colnames(all_var_Run1) <- cells_Run1
+all_var_full_Run1 <- cbind(to_add_Run1, all_var_Run1)
+
+
+
+#Run2
+
+all_var_full_Run2 <- read_tsv("SDR005_Run2_Plots/06_GATK_VEP/SDR005_Run2.vcf", skip = 118, col_names = TRUE)
+#Fill in empty information properly 
+all_var_full_Run2 <- all_var_full_Run2  %>% mutate(ID = ".", QUAL = ".", FILTER = ".", FORMAT = "GT:AD:DP:GQ:PL")
+
+#Rename cells to have suffix like in merged seurat
+to_add_Run2 <- all_var_full_Run2[,c(1:9)]
+all_var_Run2 <- all_var_full_Run2[,c(10:length(all_var_full_Run2))]
+all.equal(colnames(all_var_Run2), cells_check_Run2)
+colnames(all_var_Run2) <- cells_Run2
+all_var_full_Run2 <- cbind(to_add_Run2, all_var_Run2)
+
+
+
+#Merge the variant files
+
+all_var_full <- full_join(all_var_full_Run1, all_var_full_Run2, by = c("#CHROM", "POS", "ID", "REF", "ALT", "QUAL", "FILTER", "INFO", "FORMAT"))
+
+#Check cell order again 
+all.equal(colnames(all_var_full[,c(10:length(all_var_full))]), colnames(cDNA_data_Seurat))
+
+#REMARK - use skripts now from other analysis 
+
+```
+
+
+
+#Make metadata for genoytpes
+
+```{r}
+
+#Split for processing and adding
+
+#for metadata
+to_add <- all_var_full[,c(1:9)]
+
+#For variants
+all_var <- all_var_full[,c(10:length(all_var_full))]
+all_var <- as.data.table(all_var)
+
+
+#_________________________________________________________________________
+
+#Make metadata table for Genotypes
+
+#Split info column - only first row now extracted - multiple entries per gene 
+to_add_info <- lapply(to_add$INFO, function(x) unlist(strsplit(x, split = ",-")))
+to_add_info_split <- data.frame(do.call('rbind', strsplit(as.character(to_add_info),'|',fixed=TRUE)))
+to_add_info_split_for_merge <- data.frame(Consequence = to_add_info_split$X2, 
+                                          IMPACT=to_add_info_split$X3, 
+                                          SYMBOL=to_add_info_split$X4, 
+                                          Gene= to_add_info_split$X5, 
+                                          Feature_type =to_add_info_split$X6, 
+                                          BIOTYPE =to_add_info_split$X7, 
+                                          SNP_ID = to_add_info_split$X18)
+
+#Add to metadata
+to_add <- cbind(to_add, to_add_info_split_for_merge)
+
+
+
+Geno_meta <- to_add
+
+#Unique identifier for each variant
+#Modify Consequence string so its compatible with seurat later
+
+Geno_meta <- Geno_meta %>% mutate(Consequence = str_replace_all(Consequence, "_", ":"))
+Geno_meta <- Geno_meta %>% mutate(ID_Geno = str_c(SYMBOL, `#CHROM`, POS, REF, ALT, Consequence ,sep = "-"))
+
+
+#Annotate AMP_ID to each varint
+
+annot <- read.delim("REF_lists/SDR005_genomic_annotation_file.txt")
+
+
+Geno_meta_gr <- Geno_meta %>% select(Chromosome = `#CHROM`, Start = POS, END = POS, ID = ID_Geno)
+Geno_meta_gr <-  makeGRangesFromDataFrame(Geno_meta_gr, keep.extra.columns = TRUE)
+
+annot_gr <- annot %>% select(Chromosome = seqnames, Start = start, End = end, ID)
+annot_gr <- makeGRangesFromDataFrame(annot_gr, keep.extra.columns = TRUE)
+
+
+
+Overlap <- findOverlaps(Geno_meta_gr, annot_gr)
+#gene_names <- CharacterList(split(SDR005_hg38_MB_input_gr$Gene[subjectHits(Overlap)],queryHits(Overlap)))
+Gene<- split(annot_gr$ID[subjectHits(Overlap)], queryHits(Overlap))
+Gene <- CharacterList(split(annot_gr$ID[subjectHits(Overlap)], queryHits(Overlap)))
+
+mcols(Geno_meta_gr) <- DataFrame(mcols(Geno_meta_gr), Gene) 
+
+#Make dataframe
+Geno_meta_add <- Geno_meta_gr %>% as.data.frame() %>% tibble::as_tibble() 
+Geno_meta_add  <- unnest(Geno_meta_add, cols = Gene) %>% distinct() %>% select(ID, Amp_ID = Gene)
+Geno_meta <- Geno_meta %>% left_join(Geno_meta_add, by = c("ID_Geno" = "ID"))
+
+#Also add in target name
+annot_add <- annot %>% select(ID, Gene_annot = Gene)
+Geno_meta <- Geno_meta %>% left_join(annot_add, by = c("Amp_ID" = "ID"))
+
+#Unique identifier for each variant - modify with target_name from Julia and not with the one from VEP
+#Modify Consequence string so its compatible with seurat later
+
+
+Geno_meta <- Geno_meta %>% mutate(ID_Geno = str_c(Gene_annot, `#CHROM`, POS, REF, ALT, Consequence ,sep = "-"))
+
+
+
+```
+
+
+
+
+## Add full genotype data as an assay 
+0 (WT), 1 (HET), 2 (HOM) - rest of information as list in @misc slot
+No Cutoff first - do that in a second assay
+
+```{r}
+
+#For variants
+all_var <- all_var_full[,c(10:length(all_var_full))]
+all_var <- as.data.table(all_var)
+
+
+#_________________________________________________________________________
+#Genotype
+
+#Extract the genotype information from the filtered variant file
+#Get genotype
+extract_vcf_info <- function(x) {
+  sapply(strsplit(x, ":"), function(y) y[1])
+}
+
+all_var_GT <- all_var[, lapply(.SD, extract_vcf_info)]
+
+
+#Replace 0/1 with 1 , 1/1 with 2, NA with 0
+
+all_var_GT  <- all_var_GT %>%
+  mutate(across(everything(), ~ case_when(
+    . == "0/1" ~ "1",
+    . == "1/1" ~ "2",
+    TRUE ~ as.character(.)
+  ))) %>%
+  mutate(across(everything(), as.numeric)) %>%
+  mutate(across(everything(), ~ replace_na(., 0)))
+
+
+#Integreate 0/0 based on read coverage per cell 
+
+cut_off = 0 # no cutoff at this point
+
+gDNA_mat <- cDNA_data_Seurat@assays$gDNA$counts %>% as.data.frame()
+all.equal(colnames(gDNA_mat), colnames(all_var))
+
+gDNA_mat <- gDNA_mat %>% mutate(Amp_ID = rownames(gDNA_mat))
+
+#Get outline of Geno - information 
+
+gDNA_mat_mod <- data.frame(Amp_ID = Geno_meta$Amp_ID)
+
+gDNA_mat_mod <- gDNA_mat_mod %>% left_join(gDNA_mat, by = c("Amp_ID"))
+gDNA_mat_mod <- gDNA_mat_mod %>% select(-Amp_ID)
+rownames(gDNA_mat_mod) <- Geno_meta$ID_Geno
+
+
+gDNA_mat_mod_rep <- gDNA_mat_mod %>%   
+    mutate(across(everything(), ~ case_when(
+    . > cut_off ~ 0,
+    . <= cut_off ~ NA
+  )))
+
+
+#Combine both matrices for a full Genotype matrix - NAs introduced if not covered by cutoff
+all_var_GT <- as.matrix(all_var_GT) + as.matrix(gDNA_mat_mod_rep) %>% as.data.frame()
+rownames(all_var_GT ) <- Geno_meta$ID_Geno
+
+#Check order of cells again
+all.equal(colnames(all_var_GT), colnames(cDNA_data_Seurat))
+
+
+
+
+#_________________________________________________________________________
+#Read depth 
+
+#RD different in gDNA matrix and variant calling file 
+
+#Fore read depth
+extract_vcf_info <- function(x) {
+  sapply(strsplit(x, ":"), function(y) y[3])
+}
+
+all_var_DP <- all_var[, lapply(.SD, extract_vcf_info)]
+#all_var_DP <- cbind(to_add, all_var_DP)
+
+all_var_DP <- all_var_DP %>% 
+               mutate_all(as.numeric)
+
+#Make DF for addition to produce NA values in gDNA mat for values that need to be substituted with read depth from GATK vcf file
+
+all_var_DP_0 <- all_var_DP %>%
+  mutate_all(~ifelse(is.na(.), 0, .)) %>% #if NA then to 0
+  mutate_all(~ifelse(. > 0, NA, .)) %>% #if not 0 then NA
+  mutate_all(as.numeric)
+
+#Add this matrix with gDNA_mat_mod to produce NA values where read depth of DP should be - then add 0 there
+gDNA_mat_mod <- as.matrix(gDNA_mat_mod) + as.matrix(all_var_DP_0) %>% as.data.frame()
+
+#Make 0 in both for next addition to get rid of NA values
+gDNA_mat_mod <- gDNA_mat_mod %>%  mutate_all(~ifelse(is.na(.), 0, .))
+all_var_DP <- all_var_DP %>% mutate_all(~ifelse(is.na(.), 0, .)) 
+
+#Now add the DP matrix with it to retain the original DP read depth 
+all_var_DP <- as.matrix(gDNA_mat_mod) + as.matrix(all_var_DP) %>% as.data.frame()
+
+
+
+#_________________________________________________________________________
+#Calculate VAF with alternative reads
+
+#For allelic reads
+extract_vcf_info <- function(x) {
+  sapply(strsplit(x, ":"), function(y) y[2])
+}
+
+all_var_AD <- all_var[, lapply(.SD, extract_vcf_info)]
+
+ALT_reads <-  all_var_AD %>%
+         mutate_all(~sub(".*,", "", .)) %>%
+  mutate_all(as.numeric) %>% 
+  mutate_all(~ifelse(is.na(.), 0, .)) 
+
+
+VAF <- as.matrix(ALT_reads)/as.matrix(all_var_DP) %>% as.data.frame()  %>%  mutate_all(as.numeric) 
+
+
+#_________________________________________________________________________
+#Genotype Quality 
+
+
+#Fore Genotype Quality 
+extract_vcf_info <- function(x) {
+  sapply(strsplit(x, ":"), function(y) y[4])
+}
+
+all_var_GQ <- all_var[, lapply(.SD, extract_vcf_info)]
+#all_var_GQ <- cbind(to_add, all_var_GQ)
+
+all_var_GQ <- all_var_GQ %>% 
+               mutate_all(as.numeric) 
+
+
+#_________________________________________________________________________
+#Add to Seurat 
+
+#GT as assay
+#Geno_meta as metadata
+#rest of information (all_var, RD, VAF, GQ) as list
+
+all.equal(rownames(all_var_GT), Geno_meta$ID_Geno)
+all.equal(colnames(all_var_GT), colnames(cDNA_data_Seurat))
+
+
+#Make assay and add to Seurat
+GT_assay <- CreateAssay5Object(counts = as.sparse(all_var_GT))
+cDNA_data_Seurat[["Geno"]] <- GT_assay
+Assays(cDNA_data_Seurat)
+
+#Add metadata
+cDNA_data_Seurat@assays$Geno@meta.data <- Geno_meta
+
+
+#Make list for the rest of the information 
+all_var <- all_var %>% as.data.frame()
+rownames(all_var) <- Geno_meta$ID_Geno
+
+all_var_DP <- all_var_DP %>% as.data.frame()
+rownames(all_var_DP) <- Geno_meta$ID_Geno
+
+VAF <- VAF %>% as.data.frame()
+rownames(VAF) <- Geno_meta$ID_Geno
+
+ALT_reads <- ALT_reads %>% as.data.frame()
+rownames(ALT_reads) <- Geno_meta$ID_Geno
+
+
+all_var_GQ <- all_var_GQ %>% as.data.frame()
+rownames(all_var_GQ) <- Geno_meta$ID_Geno
+
+list_to_add <- list(full = all_var,
+                    DP = all_var_DP,
+                    AD = ALT_reads, 
+                    VAF = VAF,
+                    GQ = all_var_GQ)
+
+#Add list to misc slot
+cDNA_data_Seurat@assays$Geno@misc <- list_to_add
+
+
+#Save again
+saveRDS(cDNA_data_Seurat, "SDR005_Combined_Geno_full.rds")
+
+
+```
+
+
+
+#Apply filtering on read depth and GQ
+
+```{r}
+
+#Load data
+
+cDNA_data_Seurat <- readRDS("SDR005_Combined_Geno_full.rds")
+
+#Get all matrices
+GT_mat <- cDNA_data_Seurat@assays$Geno$counts %>% as.data.frame()
+Geno_meta <- cDNA_data_Seurat@assays$Geno@meta.data
+
+Geno_list <- cDNA_data_Seurat@assays$Geno@misc
+list2env(Geno_list, envir = .GlobalEnv)
+
+
+#Set cutoffs 
+
+cut_off_RD = 5
+cut_off_GQ = 30
+
+#Make RD cutoff - make data frame dataframe to produce NAs 
+DP_rep <- DP %>%   
+    mutate(across(everything(), ~ case_when(
+    . > cut_off_RD ~ 0,
+    . <= cut_off_RD ~ NA
+  )))
+
+#Make GQ cutoff - make data frame dataframe to produce NAs 
+
+GQ_rep <- GQ %>%
+  mutate(across(everything(), ~ case_when(
+    is.na(.) ~ 99,            #Set NAs to maximum value - no WT data integrated here
+    TRUE ~ as.numeric(.)
+  ))) %>%
+  mutate(across(everything(), ~ case_when(
+    . > cut_off_GQ ~ 0,
+    . <= cut_off_GQ ~ NA
+  )))
+
+
+#Add in all matrixes with GT to produce NAs 
+
+GT_mat_mod <- as.matrix(GT_mat) + as.matrix(DP_rep) + as.matrix(GQ_rep) %>% as.data.frame()
+
+
+#Add back into new assay
+
+
+#Make assay and add to Seurat
+GT_mod_assay <- CreateAssay5Object(counts = as.sparse(GT_mat_mod))
+cDNA_data_Seurat[["Geno_filtered"]] <- GT_mod_assay
+Assays(cDNA_data_Seurat)
+
+#Add metadata
+cDNA_data_Seurat@assays$Geno_filtered@meta.data <- Geno_meta
+
+#Add list data - unfiltered
+
+cDNA_data_Seurat@assays$Geno_filtered@misc <- Geno_list
+
+#Save again
+saveRDS(cDNA_data_Seurat, "SDR005_Combined_Geno_full.rds")
+
+```
+
+
+
+#Modify metadata to include full sample information 
+
+```{r}
+
+cDNA_data_Seurat <- readRDS("SDR005_Combined_Geno_full.rds")
+
+metadata <- cDNA_data_Seurat@meta.data
+
+
+info_split <- data.frame(do.call('rbind', strsplit(as.character(metadata$Type),'_',fixed=TRUE)))
+colnames(info_split) <- c("Sample", "Sample_ID", "sbc_number")
+metadata <- metadata %>% mutate(Sample_ID = info_split$Sample_ID)
+metadata  <- metadata  %>%
+    mutate(Tumor_ID = case_when(Sample_ID == "LN0267" ~ "FL7",
+                                Sample_ID ==  "LN0198" ~ "FL11",
+                                Sample_ID ==  "LN0281" ~ "GCB4"))
+
+
+cDNA_data_Seurat@meta.data <- metadata
+
+saveRDS(cDNA_data_Seurat, "SDR005_Combined_Geno_full.rds")
+```
+
+
+
+#Visualize nCells per Variant
+
+
+```{r}
+
+Geno_mat <- cDNA_data_Seurat@assays$Geno_filtered$counts %>% as.data.frame()
+Geno_mat_mod <- Geno_mat %>% mutate_all(~na_if(., 0))
+nCells_per_Variant <- rowSums(!is.na(Geno_mat_mod ))
+nCells_per_Variant <- data.frame(nCells_per_Variant = nCells_per_Variant)
+
+#Quickly visualize
+
+ggplot(nCells_per_Variant, aes(x=nCells_per_Variant)) + 
+  scale_x_log10()+
+  geom_histogram(binwidth=0.1)
+
+```
+
+
+#Filter for variants that are intended to be targeted - NOT USED
+
+```{r}
+
+variants_annot <- read.csv("REF_lists/SDR001_variants_annotate.csv")
+
+Geno_meta <- cbind(Geno_meta, nCells_per_Variant)
+
+Geno_meta_filter <- Geno_meta %>% left_join(variants_annot, by = "Amp_ID")
+Geno_meta_filter <- Geno_meta_filter %>% filter(POS == SNP_pos_hg38)
+
+
+
+
+```
+
+
+#Plot some quality control plots - VAF vs read depth - add VAF as an assay 
+
+```{r}
+#Load data
+
+cDNA_data_Seurat <- readRDS("SDR005_Combined_Geno_full.rds")
+
+metadata <- cDNA_data_Seurat@meta.data
+
+#Get all matrices
+GT_mat <- cDNA_data_Seurat@assays$Geno_filtered$counts %>% as.data.frame()
+Geno_meta <- cDNA_data_Seurat@assays$Geno_filtered@meta.data
+
+Geno_list <- cDNA_data_Seurat@assays$Geno_filtered@misc
+list2env(Geno_list, envir = .GlobalEnv)
+
+
+
+
+#_________________________________________________________________________
+#Respahe data for plotting
+
+#Genotype - still need to add in WT coverage !!! - done somewhat above already
+GT_mat <- GT_mat %>% t() %>% as.data.frame()
+GT_mat <- GT_mat %>% mutate(cell = rownames(GT_mat))
+GT_mat_res <- GT_mat %>% reshape2::melt(id.vars = c("cell"),
+                                        variable.name = "ID", 
+                                        value.name = "Genotype")
+
+
+#VAF
+VAF <- VAF %>% t() %>% as.data.frame()
+VAF <- VAF %>% mutate(cell = rownames(VAF))
+VAF_res <- VAF %>% reshape2::melt(id.vars = c("cell"),
+                                  variable.name = "ID", 
+                                  value.name = "VAF")
+
+
+
+#Read depth 
+DP <- DP %>% t() %>% as.data.frame()
+DP <- DP %>% mutate(cell = rownames(DP))
+DP_res <- DP %>% reshape2::melt(id.vars = c("cell"),
+                                variable.name = "ID", 
+                                value.name = "DP")
+
+
+
+
+#Genotype quality 
+GQ <- GQ  %>% t() %>% as.data.frame()
+GQ  <- GQ  %>% mutate(cell = rownames(GQ))
+GQ_res <- GQ  %>% reshape2::melt(id.vars = c("cell"),
+                                variable.name = "ID", 
+                                value.name = "GQ")
+
+
+
+#Join in all of them 
+
+Combined_VAF_to_plot <- GT_mat_res %>% left_join(VAF_res, by = c("cell" = "cell", "ID" = "ID"))
+Combined_VAF_to_plot <- Combined_VAF_to_plot %>% left_join(DP_res, by = c("cell" = "cell", "ID" = "ID"))
+Combined_VAF_to_plot <- Combined_VAF_to_plot %>% left_join(GQ_res, by = c("cell" = "cell", "ID" = "ID"))
+
+#Add condition info
+
+to_add <- metadata %>% select(cell_merge, Tumor_ID)
+
+Combined_VAF_to_plot <- Combined_VAF_to_plot %>% left_join(to_add, by = c("cell" = "cell_merge"))
+
+unique(Combined_VAF_to_plot$Genotype)
+#Filter out NA values - change later 
+
+#Combined_VAF_to_plot <- Combined_VAF_to_plot %>% filter(!is.na(Genotype))
+Combined_VAF_to_plot$Genotype <- factor(Combined_VAF_to_plot$Genotype, levels = c(2, 1, 0, NA))
+
+
+#_________________________________________________________________________
+#Plot VAF vs read depth - Color genotype
+
+#Only do plots for variants that we wanted to find
+
+out_put_dir <- "SDR005_GATK_Plots/All_variants_VAF"
+plot_genes <- unique(Geno_meta$ID_Geno)
+
+
+
+i=plot_genes[28]
+
+#group_colors <- c("1/1" = "forestgreen", "0/1" = "cyan2", "0/0" = "dodgerblue3", "./." = "grey")
+group_colors <- c("2" = "forestgreen", "1" = "cyan2", "0" = "dodgerblue3", "NA" = "grey")
+
+
+for (i in unique(plot_genes)){
+  Df_to_plot_i <- Combined_VAF_to_plot %>% filter(ID == i)
+  
+  p1 <-   Df_to_plot_i %>%
+    ggplot(aes(x=VAF, y=DP, color=Genotype)) + 
+  	geom_point(size = 5) + 
+	#scale_colour_gradient(low = "gray90", high = "#990000", limits = c(0,1)) +
+  #xlim(c(0,30))+
+    #ylim(c(0,30))+
+    scale_color_manual(values = group_colors )+
+  	scale_x_continuous(limits = c(0,1)) + 
+  	scale_y_log10(limits = c(1,10000)) + 
+  	theme_classic() +
+  	#geom_vline(xintercept = 10) +
+  	#geom_hline(yintercept = 10) +
+    	theme(plot.title = element_text(hjust=0.5, face="bold")) +
+    facet_wrap("Tumor_ID")+
+  	ggtitle(i)
+  
+  
+  p2 <- Df_to_plot_i %>%
+    ggplot(aes(x=VAF, y=DP, color=GQ)) + 
+  	geom_point(size = 5) + 
+	scale_colour_gradient(low = "gray90", high = "#990000", limits = c(1,99)) +
+  #xlim(c(0,30))+
+    #ylim(c(0,30))+
+    #scale_color_manual(values = group_colors )+
+  	scale_x_continuous(limits = c(0,1)) + 
+  	scale_y_log10(limits = c(1,10000)) + 
+  	theme_classic() +
+  	#geom_vline(xintercept = 10) +
+  	#geom_hline(yintercept = 10) +
+    	theme(plot.title = element_text(hjust=0.5, face="bold")) +
+    facet_wrap("Tumor_ID")+
+  	ggtitle(i)
+  
+p <- p1 + p2
+  
+
+  ggsave(paste(i,".pdf",sep = ""), path = out_put_dir, plot = p, device = "pdf", scale = 1,
+         width = 90, height = 15, units = "cm", dpi = 300)
+    
+}
+
+
+p1
+p
+
+
+```
+
+
+
+
+

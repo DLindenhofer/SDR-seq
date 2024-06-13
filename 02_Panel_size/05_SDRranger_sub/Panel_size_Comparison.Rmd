@@ -39,21 +39,21 @@ cDNA_data_Seurat_120 <- readRDS(here("SDR002_120_120_Plots/SDR002_120_120_Seurat
 cDNA_data_Seurat_240 <- readRDS(here("SDR002_240_240_Plots/SDR002_240_240_Seurat.rds"))
 
 #Ref lists for cDNA
-cDNA_60_60_targets <- read.delim("/Users/dominik.lindenhofer/Documents/Data_Local/202307_SDR002/SDR002_Refs_lists_R/SDR002_cDNA_60_60_targets-V2.txt", header = FALSE) %>% pull(1)
-cDNA_120_120_targets <- read.delim("/Users/dominik.lindenhofer/Documents/Data_Local/202307_SDR002/SDR002_Refs_lists_R/SDR002_cDNA_120_120_targets-V2.txt", header = FALSE) %>% pull(1)
-cDNA_240_240_targets <- read.delim("/Users/dominik.lindenhofer/Documents/Data_Local/202307_SDR002/SDR002_Refs_lists_R/SDR002_cDNA_240_240_targets-V2.txt", header = FALSE) %>% pull(1)
+cDNA_60_60_targets <- read.delim("Input/Panel_size_cDNA_60_60_targets.txt", header = FALSE) %>% pull(1)
+cDNA_120_120_targets <- read.delim("Input/Panel_size_cDNA_120_120_targets.txt", header = FALSE) %>% pull(1)
+cDNA_240_240_targets <- read.delim("Input/Panel_size_cDNA_240_240_targets.txt", header = FALSE) %>% pull(1)
 
 
 
 
 #Ref lists for gDNA
-gDNA_60_60_targets <- read.delim("/Users/dominik.lindenhofer/Documents/Data_Local/202307_SDR002/SDR002_Refs_lists_R/SDR002_gDNA_60_60_targets.txt", header = FALSE) %>% pull(1)
+gDNA_60_60_targets <- read.delim("Input/Panel_size_gDNA_60_60_targets.txt", header = FALSE) %>% pull(1)
 gDNA_60_60_targets <- gDNA_60_60_targets %>% str_replace_all("_", "-")
 
-gDNA_120_120_targets <- read.delim("/Users/dominik.lindenhofer/Documents/Data_Local/202307_SDR002/SDR002_Refs_lists_R/SDR002_gDNA_120_120_targets.txt", header = FALSE) %>% pull(1)
+gDNA_120_120_targets <- read.delim("Input/Panel_size_gDNA_120_120_targets.txt", header = FALSE) %>% pull(1)
 gDNA_120_120_targets <- gDNA_120_120_targets %>% str_replace_all("_", "-")
 
-gDNA_240_240_targets <- read.delim("/Users/dominik.lindenhofer/Documents/Data_Local/202307_SDR002/SDR002_Refs_lists_R/SDR002_gDNA_240_240_targets.txt", header = FALSE) %>% pull(1)
+gDNA_240_240_targets <- read.delim("Input/Panel_size_gDNA_240_240_targets.txt", header = FALSE) %>% pull(1)
 gDNA_240_240_targets <- gDNA_240_240_targets %>% str_replace_all("_", "-")
 
 
@@ -740,13 +740,13 @@ gDNA_reads_aver_expr$Type <- factor(gDNA_reads_aver_expr$Type, levels = c("SDR00
 #Load target gene lists
 
 #Ref lists for gDNA
-gDNA_60_60_targets <- read.delim("/Users/dominik.lindenhofer/Documents/Data_Local/202307_SDR002/SDR002_Refs_lists_R/SDR002_gDNA_60_60_targets.txt", header = FALSE) %>% pull(1)
+gDNA_60_60_targets <- read.delim("Input/Panel_size_gDNA_60_60_targets.txt", header = FALSE) %>% pull(1)
 gDNA_60_60_targets <- gDNA_60_60_targets %>% str_replace_all("_", "-")
 
-gDNA_120_120_targets <- read.delim("/Users/dominik.lindenhofer/Documents/Data_Local/202307_SDR002/SDR002_Refs_lists_R/SDR002_gDNA_120_120_targets.txt", header = FALSE) %>% pull(1)
+gDNA_120_120_targets <- read.delim("Input/Panel_size_gDNA_120_120_targets.txt", header = FALSE) %>% pull(1)
 gDNA_120_120_targets <- gDNA_120_120_targets %>% str_replace_all("_", "-")
 
-gDNA_240_240_targets <- read.delim("/Users/dominik.lindenhofer/Documents/Data_Local/202307_SDR002/SDR002_Refs_lists_R/SDR002_gDNA_240_240_targets.txt", header = FALSE) %>% pull(1)
+gDNA_240_240_targets <- read.delim("Input/Panel_size_gDNA_240_240_targets.txt", header = FALSE) %>% pull(1)
 gDNA_240_240_targets <- gDNA_240_240_targets %>% str_replace_all("_", "-")
 
 gDNA_targets_common <- intersect(gDNA_60_60_targets, gDNA_120_120_targets) 
@@ -1003,9 +1003,11 @@ RNA_UMIs_aver_expr$Type <- factor(RNA_UMIs_aver_expr$Type, levels = c("SDR002_60
 #Load target gene lists
 
 
-cDNA_60_60_targets <- read.delim("/Users/dominik.lindenhofer/Documents/Data_Local/202307_SDR002/SDR002_Refs_lists_R/SDR002_cDNA_60_60_targets-V2.txt", header = FALSE) 
-cDNA_120_120_targets <- read.delim("/Users/dominik.lindenhofer/Documents/Data_Local/202307_SDR002/SDR002_Refs_lists_R/SDR002_cDNA_120_120_targets-V2.txt", header = FALSE) 
-cDNA_240_240_targets <- read.delim("/Users/dominik.lindenhofer/Documents/Data_Local/202307_SDR002/SDR002_Refs_lists_R/SDR002_cDNA_240_240_targets-V2.txt", header = FALSE) 
+#Ref lists for cDNA
+cDNA_60_60_targets <- read.delim("Input/Panel_size_cDNA_60_60_targets.txt", header = FALSE) %>% pull(1)
+cDNA_120_120_targets <- read.delim("Input/Panel_size_cDNA_120_120_targets.txt", header = FALSE) %>% pull(1)
+cDNA_240_240_targets <- read.delim("Input/Panel_size_cDNA_240_240_targets.txt", header = FALSE) %>% pull(1)
+
 
 #Define common ones
 cDNA_targets_common <- cDNA_60_60_targets %>% filter(V2 == "CA" | V2 == "C") %>% dplyr::pull(1)

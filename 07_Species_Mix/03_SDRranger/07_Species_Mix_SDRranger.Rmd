@@ -1,0 +1,3038 @@
+---
+title: "20230710_SDR001_SDRranger"
+author: "Dominik Lindenhofer"
+date: "2023-07-10"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+## Load packages
+
+
+```{r}
+
+library(Seurat)
+library(dplyr)
+library(ggplot2)
+library(Matrix)
+library(reshape2)
+library(data.table)
+library(stringr)
+library(tidyr)
+library(scales)
+library(rtracklayer)
+library(here)
+
+
+plot_save_dir <- here("SDR009_Plots")
+path_dir_gDNA_reads <- here("gDNA/raw_reads_bc_matrix")
+path_dir_cDNA_reads <- here("RNA/raw_reads_bc_matrix")
+path_dir_cDNA_umis <- here("RNA/raw_umis_bc_matrix")
+panel_size_gDNA = 28
+panel_size_RNA  = 30
+
+file_save_dir <- "/Users/dominik.lindenhofer/ownCloud/Shared_project_folder/Paper_drafts/2022_SDR_Paper/Source_data/Individual_files_all"
+
+```
+
+# Use non filtered data as input
+
+#Construct gDNA metadata table - from gDNA reads
+
+```{r}
+
+#load read data sets 
+
+gDNA_data_features_reads <- read.delim(paste0(path_dir_gDNA_reads, "/features.tsv.gz"), header = FALSE) %>% dplyr::pull(1)
+gDNA_data_features_reads <- sub("_chrom", "\\1", gDNA_data_features_reads)
+gDNA_data_barcodes_reads <- read.delim(paste0(path_dir_gDNA_reads,"/barcodes.tsv.gz"), header = FALSE) %>% dplyr::pull(1)
+gDNA_mat_reads <- readMM(paste0(path_dir_gDNA_reads,"/matrix.mtx.gz"))
+
+dimnames(gDNA_mat_reads) <- list(gDNA_data_features_reads, gDNA_data_barcodes_reads)
+
+
+#Calculate sum reads and sum features
+gDNA_mat_reads_sum <- colSums(gDNA_mat_reads)
+
+#Subset for human and mouse rows and calculate number of reads
+#H_rows <- grep("_Human", rownames(gDNA_mat_reads), value = TRUE)
+#gDNA_mat_reads_H <- gDNA_mat_reads[H_rows,]
+#gDNA_mat_reads_sum_H <- colSums(gDNA_mat_reads_H)
+
+#M_rows <- grep("_Mouse", rownames(gDNA_mat_reads), value = TRUE)
+#gDNA_mat_reads_M <- gDNA_mat_reads[M_rows,]
+#gDNA_mat_reads_sum_M <- colSums(gDNA_mat_reads_M)
+
+
+
+#gDNA_mat_reads_count <- apply(gDNA_mat_reads , 2, function(col) sum(col != 0))
+
+gDNA_mat_reads_meta <- data.frame(nReads_gDNA = gDNA_mat_reads_sum, 
+                                  #nReads_gDNA_H = gDNA_mat_reads_sum_H,
+                                  #nReads_gDNA_M = gDNA_mat_reads_sum_M,
+                                        #nFeature_gDNA_reads = gDNA_mat_reads_count, 
+                                        cell = colnames(gDNA_mat_reads), 
+                                        row.names = colnames(gDNA_mat_reads)) %>%
+                                        replace(is.na(.), 0)
+
+
+
+```
+
+
+
+#Construct cDNA metadata table - from cDNA reads
+
+```{r}
+
+#Load sbc annot file
+
+sbc_annot <- read.csv("REF_lists/SDR009_sbcs.csv")
+  
+#load read data sets 
+
+cDNA_data_features_reads <- read.delim(paste0(path_dir_cDNA_reads,"/features.tsv.gz"), header = FALSE) %>% dplyr::pull(1)
+cDNA_data_features_reads <- sub("_chrom", "\\1", cDNA_data_features_reads)
+cDNA_data_barcodes_reads <- read.delim(paste0(path_dir_cDNA_reads, "/barcodes.tsv.gz"), header = FALSE) %>% dplyr::pull(1)
+cDNA_mat_reads <- readMM(paste0(path_dir_cDNA_reads, "/matrix.mtx.gz"))
+dimnames(cDNA_mat_reads) <- list(cDNA_data_features_reads, cDNA_data_barcodes_reads)
+
+
+#Make metatable for cDNA
+
+#Calculate sum reads and sum features - include CROP-seq in total number of reads
+cDNA_mat_reads_sum <- colSums(cDNA_mat_reads)
+
+
+#Count features 
+#cDNA_mat_reads_count <- apply(cDNA_mat_reads , 2, function(col) sum(col != 0))
+
+cDNA_mat_reads_meta <- data.frame(nReads_RNA = cDNA_mat_reads_sum, 
+                                        #nFeatures_RNA_reads = cDNA_mat_reads_count,
+                                        cell_index = colnames(cDNA_mat_reads), 
+                                        row.names = colnames(cDNA_mat_reads))
+
+
+#Split sample BC info and assign
+cell_id_split <- data.frame(do.call('rbind', strsplit(as.character(cDNA_mat_reads_meta$cell_index), ':', fixed=TRUE)))
+
+colnames(cell_id_split) <- c("cell", "sbc")
+
+Types <- sbc_annot %>% dplyr::select(Type = Sample, sbc)
+cell_id_split <- cell_id_split %>% left_join(Types, by = "sbc")
+cDNA_mat_reads_meta <- cbind(cDNA_mat_reads_meta, cell_id_split)
+
+
+#Calculate max_sbc ratio - inlcude CROP reads here for ratio
+cDNA_mat_reads_meta <- as.data.table(cDNA_mat_reads_meta)
+max_sbc <- cDNA_mat_reads_meta[cDNA_mat_reads_meta[, .I[which.max(nReads_RNA)], by=cell]$V1]
+sum_sbc <- cDNA_mat_reads_meta[, sum(nReads_RNA),by=list(cell)]
+ratio_sbc <- max_sbc$nReads_RNA/sum_sbc$V1
+max_sbc <- data.frame(cell_index = max_sbc$cell_index, cDNA_ratio_sbc = ratio_sbc, max_sbc = "max_sbc")
+
+cDNA_mat_reads_meta <- cDNA_mat_reads_meta %>% left_join(max_sbc, by = "cell_index")
+
+
+```
+
+
+
+
+
+
+#Merge CROP, gDNA and cDNA metatable files 
+
+```{r}
+
+
+#Merge with gDNA file - ATTENTION - certain gDNA values duplicated as possibilyt that same cell has different sample barcodes - only keep max sbc for later - retain now to be compatible to make a seurat object
+
+
+gDNA_cDNA_meta <- cDNA_mat_reads_meta %>% 
+  left_join(gDNA_mat_reads_meta, by = c("cell")) %>%
+                              replace(is.na(.), 0)
+
+
+#Add a column for the sum of reads for both cDNA/CROP and gDNA - keep only max sbc later
+gDNA_cDNA_meta$nReads_tot <- gDNA_cDNA_meta$nReads_RNA + gDNA_cDNA_meta$nReads_gDNA
+row.names(gDNA_cDNA_meta) <- gDNA_cDNA_meta$cell_index
+
+
+#Merge cDNA meta file base on reads only - disregard sbc info - merge with gNDA mat - no duplicates made this time 
+
+cDNA_mat_reads_meta_wo_sbc <- cDNA_mat_reads_meta %>% 
+                              group_by(cell) %>% 
+                              summarise(nReads_RNA_wo_sbc = sum(nReads_RNA))%>%
+                              left_join(gDNA_mat_reads_meta, by = c("cell"))  %>%
+                              replace(is.na(.), 0)
+
+
+
+#Calculate total number of reads
+cDNA_mat_reads_meta_wo_sbc$nReads_tot <- cDNA_mat_reads_meta_wo_sbc$nReads_RNA_wo_sbc + cDNA_mat_reads_meta_wo_sbc$nReads_gDNA
+
+cDNA_mat_reads_meta_wo_sbc <- cDNA_mat_reads_meta_wo_sbc %>% mutate(selection_status = if_else(nReads_tot >= 1000, "selected", "not_selected"))
+
+#Make rank rank plot for cutoff threshold setting
+
+group_colors <- c(selected = "#990000", not_selected = "black")
+
+index_v_line <- cDNA_mat_reads_meta_wo_sbc %>%
+  arrange(desc(nReads_tot)) %>%
+  mutate(index = row_number()) %>%
+  filter(nReads_tot == 1000) %>%
+  summarize(last_index = last(index)) %>%
+  pull(last_index)
+
+
+title = "nReads_tot_ranked.png"
+p <- cDNA_mat_reads_meta_wo_sbc %>% 
+  arrange(desc(nReads_tot)) %>%
+  mutate(index = 1:nrow(cDNA_mat_reads_meta_wo_sbc)) %>%
+   ggplot() +
+  	geom_point(aes(x=index, y= nReads_tot, color = selection_status)) +
+    #geom_point(aes(x=index, y= nReads_gDNA), alpha = 0.2, color = "red")+
+  #geom_point(aes(x=index, y= nReads_RNA_wo_sbc), alpha = 0.2, color = "darkgreen")+
+  	theme_classic() +
+    scale_x_log10() + 
+  	scale_y_log10() + 
+  geom_vline(xintercept = index_v_line, linetype = "longdash")+
+      scale_fill_manual(values = group_colors)+
+      scale_color_manual(values = group_colors)+
+   guides(fill = "none", color = "none")+
+  #xlim(c(0.3,0.7))+
+  #	geom_vline(xintercept = 0.8)+
+      theme(plot.title = element_text(hjust=0.5, face="bold")) +
+  	ggtitle(title)
+     
+
+    ggsave(filename = title, path = plot_save_dir, plot = p, device = "png", scale = 1,
+       width = 15, height = 15, units = "cm", dpi = 300)
+
+
+
+title = "nReads_RNA_ranked.png"
+p <- cDNA_mat_reads_meta_wo_sbc %>% 
+  arrange(desc(nReads_RNA_wo_sbc)) %>%
+  mutate(index = 1:nrow(cDNA_mat_reads_meta_wo_sbc)) %>%
+   ggplot() +
+  	geom_point(aes(x=index, y= nReads_RNA_wo_sbc, color = selection_status)) +
+    #geom_point(aes(x=index, y= nReads_gDNA), alpha = 0.2, color = "red")+
+  #geom_point(aes(x=index, y= nReads_RNA_wo_sbc), alpha = 0.2, color = "darkgreen")+
+  	theme_classic() +
+    scale_x_log10() + 
+  	scale_y_log10() + 
+   # geom_vline(xintercept = index_v_line, linetype = "longdash")+
+        scale_fill_manual(values = group_colors)+
+      scale_color_manual(values = group_colors)+
+   guides(fill = "none", color = "none")+
+  #xlim(c(0.3,0.7))+
+  #	geom_vline(xintercept = 0.8)+
+      theme(plot.title = element_text(hjust=0.5, face="bold")) +
+  	ggtitle(title)
+
+
+    ggsave(filename = title, path = plot_save_dir, plot = p, device = "png", scale = 1,
+       width = 15, height = 15, units = "cm", dpi = 300)
+  
+
+    
+
+title = "nReads_gDNA_ranked.png"
+p <- cDNA_mat_reads_meta_wo_sbc %>% 
+  arrange(desc(nReads_gDNA)) %>%
+  mutate(index = 1:nrow(cDNA_mat_reads_meta_wo_sbc)) %>%
+   ggplot() +
+  	geom_point(aes(x=index, y= nReads_gDNA, color = selection_status)) +
+    #geom_point(aes(x=index, y= nReads_gDNA), alpha = 0.2, color = "red")+
+  #geom_point(aes(x=index, y= nReads_RNA_wo_sbc), alpha = 0.2, color = "darkgreen")+
+  	theme_classic() +
+    scale_x_log10() + 
+  	scale_y_log10() + 
+      #geom_vline(xintercept = index_v_line, linetype = "longdash")+
+        scale_fill_manual(values = group_colors)+
+      scale_color_manual(values = group_colors)+
+   guides(fill = "none", color = "none")+
+  #xlim(c(0.3,0.7))+
+  #	geom_vline(xintercept = 0.8)+
+      theme(plot.title = element_text(hjust=0.5, face="bold")) +
+  	ggtitle(title)
+
+  
+  ggsave(filename = title, path = plot_save_dir, plot = p, device = "png", scale = 1,
+       width = 15, height = 15, units = "cm", dpi = 300)
+
+
+```
+
+
+
+
+
+## Make seurat from cDNA and add metadata
+
+
+```{r}
+
+#Laod matrix - umis
+cDNA_data_features_umis <- read.delim(paste0(path_dir_cDNA_umis, "/features.tsv.gz"), header = FALSE) %>% dplyr::pull(1)
+cDNA_data_features_umis <- sub("_chrom", "\\1", cDNA_data_features_reads)
+cDNA_data_barcodes_umis <- read.delim(paste0(path_dir_cDNA_umis, "/barcodes.tsv.gz"), header = FALSE) %>% dplyr::pull(1)
+cDNA_mat <- readMM(paste0(path_dir_cDNA_umis, "/matrix.mtx.gz"))
+dimnames(cDNA_mat) <- list(cDNA_data_features_umis, cDNA_data_barcodes_umis)
+
+#Make Seurat
+cDNA_data_Seurat <- CreateSeuratObject(cDNA_mat, project = "SDR009")
+
+#Add metadata
+all.equal(colnames(cDNA_data_Seurat), rownames(gDNA_cDNA_meta))
+cDNA_data_Seurat <- AddMetaData(object = cDNA_data_Seurat, metadata = gDNA_cDNA_meta)
+
+
+# Only keep highest sbc - filter out contaminating sbcs
+cDNA_data_Seurat <- subset(x = cDNA_data_Seurat, subset = max_sbc == "max_sbc")
+
+metadata <- cDNA_data_Seurat@meta.data
+
+#Rename cells to make merging with gDNA later easier 
+
+all.equal(metadata$cell_index, colnames(cDNA_data_Seurat))
+
+
+cDNA_mat_mod <- cDNA_data_Seurat@assays$RNA$counts
+cells <- metadata$cell
+features <- rownames(cDNA_data_Seurat)
+
+dimnames(cDNA_mat_mod) <- list(features, cells)
+rownames(metadata) <- cells
+
+#Make Seurat
+cDNA_data_Seurat <- CreateSeuratObject(cDNA_mat_mod, project = "SDR009")
+
+#Add metadata
+all.equal(colnames(cDNA_data_Seurat), rownames(metadata))
+cDNA_data_Seurat <- AddMetaData(object = cDNA_data_Seurat, metadata = metadata)
+
+
+
+```
+
+
+
+#Cutoff to filter out low read cells
+
+```{r}
+# Filter out low quality cells based on reads - yield around 10000-12000 cells
+
+cDNA_data_Seurat <- subset(x = cDNA_data_Seurat, subset = nReads_tot >= 1000)
+
+
+saveRDS(cDNA_data_Seurat, paste0(plot_save_dir,"/SDR009_Seurat_max_sbc_1000reads_cut.rds"))
+
+metadata <- cDNA_data_Seurat@meta.data
+
+
+```
+
+
+
+
+#Add gDNA as an assay to the Seurat
+
+```{r}
+
+#load read data sets 
+
+gDNA_data_features_reads <- read.delim(paste0(path_dir_gDNA_reads, "/features.tsv.gz"), header = FALSE) %>% dplyr::pull(1)
+gDNA_data_features_reads <- sub("_chrom", "\\1", gDNA_data_features_reads)
+gDNA_data_barcodes_reads <- read.delim(paste0(path_dir_gDNA_reads,"/barcodes.tsv.gz"), header = FALSE) %>% dplyr::pull(1)
+gDNA_mat_reads <- readMM(paste0(path_dir_gDNA_reads,"/matrix.mtx.gz"))
+dimnames(gDNA_mat_reads) <- list(gDNA_data_features_reads, gDNA_data_barcodes_reads)
+
+#Get cells for subsetting
+to_subset <- metadata$cell
+valid_to_subset <- to_subset[to_subset %in% colnames(gDNA_mat_reads)]
+
+# Check if all elements in to_subset are valid column names in gDNA_mat_reads
+all(valid_to_subset %in% colnames(gDNA_mat_reads))
+
+#Subset matrix and convert to df
+gDNA_mat_reads_df <- gDNA_mat_reads[,valid_to_subset] %>% t() %>% as.data.frame()
+
+#Add missing cells and convert to matrix again for adding 
+#Make df of missing cells 
+missing_cells <- setdiff(to_subset, valid_to_subset)
+
+
+missing_cells_df <- matrix(0, nrow = length(missing_cells), ncol = length(colnames(gDNA_mat_reads_df)),
+                           dimnames = list(missing_cells, colnames(gDNA_mat_reads_df)))
+missing_cells_df <- as.data.frame(missing_cells_df)
+
+#Combine the two dfs and bring in correct order 
+
+gDNA_mat_reads_df <- rbind(gDNA_mat_reads_df, missing_cells_df)
+gDNA_mat_reads_df <- gDNA_mat_reads_df[to_subset,]
+all.equal(metadata$cell, rownames(gDNA_mat_reads_df))
+
+gDNA_mat_reads_to_add <- gDNA_mat_reads_df %>% t()
+
+#Add assay for gDNA
+#Make assay
+gDNA_assay <- CreateAssay5Object(counts = as.sparse(gDNA_mat_reads_to_add))
+cDNA_data_Seurat[["gDNA"]] <- gDNA_assay
+
+saveRDS(cDNA_data_Seurat, paste0(plot_save_dir,"/SDR009_Seurat_max_sbc_1000reads_cut.rds"))
+cDNA_data_Seurat <- readRDS(paste0(plot_save_dir,"/SDR009_Seurat_max_sbc_1000reads_cut.rds"))
+
+#Set plot order in metadata
+
+#order <- c("PFA", "Glyoxal")
+#metadata$Type <- factor(metadata$Type, levels = order)
+
+#Set colors for plotting 
+#group_colors <- c(FL_LN0267_1 = "#EADFB4", FL_LN0267_2 = "#9BB0C1", FL_LN0267_3 = "#51829B" , FL_LN0267_4 = "#F6995C", DLBCL_LN0281_1 = "#EFBC9B", DLBCL_LN0281_2 = "#FBF3D5",DLBCL_LN0281_3 = "#D6DAC8", DLBCL_LN0281_4 = "#9CAFAA")
+
+#group_colors <- c(PFA = "#003f5c", Glyoxal = "#ffa600")
+
+#Calculate percentages for plotting 
+
+metadata <- cDNA_data_Seurat@meta.data
+#metadata$nFeature_RNA_perc <- metadata$nFeature_RNA/panel_size_RNA
+#metadata$nFeature_gDNA_perc <- metadata$nFeature_gDNA/panel_size_gDNA
+avg_UMIs <- mean(metadata$nCount_RNA)
+
+metadata <- metadata %>%
+  mutate(Type2 = sub("_.*", "", Type))
+
+metadata <- metadata %>% mutate(Color_ID = case_when(Type2 == "WTC11" ~ "#9BB0C1",
+                                                     Type2 == "NIH3T3" ~ "#F6995C",
+                                                     Type2 == "Mix" ~ "#EADFB4"))
+
+cDNA_data_Seurat@meta.data <- metadata
+
+#Set group colors and order 
+
+group_colors_df <- metadata %>% dplyr::select(Type, Type2, Color_ID) %>% distinct()
+group_colors <- group_colors_df$Color_ID
+names(group_colors) <-  group_colors_df$Type
+
+to_order <- sbc_annot$Sample
+metadata$Type <- factor(metadata$Type, levels = to_order)
+
+```
+
+
+#Add metadata for summing up human and mouse reads seperately - only max sbc cells from this point on 
+
+Detection limit of 10 reads used 
+
+gDNA
+```{r}
+
+gDNA_reads <- cDNA_data_Seurat@assays$gDNA$counts
+
+#Subset for human and mouse rows and calculate number of reads
+H_rows <- grep("-Human", rownames(gDNA_reads), value = TRUE)
+gDNA_reads_H <- gDNA_reads[H_rows,]
+gDNA_reads_sum_H <- colSums(gDNA_reads_H)
+gDNA_reads_feat_H <- colSums(gDNA_reads_H > 10)
+
+
+M_rows <- grep("-Mouse", rownames(gDNA_reads), value = TRUE)
+gDNA_reads_M <- gDNA_reads[M_rows,]
+gDNA_reads_sum_M <- colSums(gDNA_reads_M)
+gDNA_reads_feat_M <- colSums(gDNA_reads_M > 10)
+
+
+
+gDNA_meta_H_M <- data.frame(      nReads_gDNA_H = gDNA_reads_sum_H,
+                                  nFeature_gDNA_H = gDNA_reads_feat_H,
+                                  nReads_gDNA_M = gDNA_reads_sum_M,
+                                  nFeature_gDNA_M = gDNA_reads_feat_M,
+                                        cell = colnames(gDNA_reads),
+                                  row.names = colnames(gDNA_reads)) %>%
+                                         replace(is.na(.), 0)
+
+metadata <- metadata %>% left_join(gDNA_meta_H_M, by = "cell")
+
+
+```
+
+
+RNA - reads
+```{r}
+
+cells_to_filter <- metadata$cell_index
+
+cDNA_data_features_reads <- read.delim(paste0(path_dir_cDNA_reads,"/features.tsv.gz"), header = FALSE) %>% dplyr::pull(1)
+cDNA_data_features_reads <- sub("_chrom", "\\1", cDNA_data_features_reads)
+cDNA_data_barcodes_reads <- read.delim(paste0(path_dir_cDNA_reads, "/barcodes.tsv.gz"), header = FALSE) %>% dplyr::pull(1)
+cDNA_mat_reads <- readMM(paste0(path_dir_cDNA_reads, "/matrix.mtx.gz"))
+dimnames(cDNA_mat_reads) <- list(cDNA_data_features_reads, cDNA_data_barcodes_reads)
+
+
+
+cDNA_mat_reads <- cDNA_mat_reads[,cells_to_filter]
+
+#Subset for human and mouse rows and calculate number of reads
+H_rows <- grep("_Human", rownames(cDNA_mat_reads), value = TRUE)
+cDNA_reads_H <- cDNA_mat_reads[H_rows,]
+cDNA_reads_sum_H <- colSums(cDNA_reads_H)
+cDNA_reads_feat_H <- colSums(cDNA_reads_H != 0)
+
+
+M_rows <- grep("_Mouse", rownames(cDNA_mat_reads), value = TRUE)
+cDNA_reads_M <- cDNA_mat_reads[M_rows,]
+cDNA_reads_sum_M <- colSums(cDNA_reads_M)
+cDNA_reads_feat_M <- colSums(cDNA_reads_M != 0)
+
+
+
+cDNA_meta_H_M <- data.frame(      nReads_RNA_H = cDNA_reads_sum_H,
+                                  nFeature_RNA_H = cDNA_reads_feat_H,
+                                  nReads_RNA_M = cDNA_reads_sum_M,
+                                  nFeature_RNA_M = cDNA_reads_feat_M,
+                                        cell = colnames(cDNA_mat_reads),
+                                  row.names = colnames(cDNA_mat_reads)) %>%
+                                         replace(is.na(.), 0)
+
+
+metadata <- metadata %>% left_join(cDNA_meta_H_M, by = c("cell_index" = "cell"))
+
+
+
+
+```
+
+
+
+#Also do for UMIs
+
+
+```{r}
+
+cells_to_filter <- metadata$cell_index
+
+cDNA_data_features_umis <- read.delim(paste0(path_dir_cDNA_umis, "/features.tsv.gz"), header = FALSE) %>% dplyr::pull(1)
+cDNA_data_features_umis <- sub("_chrom", "\\1", cDNA_data_features_reads)
+cDNA_data_barcodes_umis <- read.delim(paste0(path_dir_cDNA_umis, "/barcodes.tsv.gz"), header = FALSE) %>% dplyr::pull(1)
+cDNA_mat <- readMM(paste0(path_dir_cDNA_umis, "/matrix.mtx.gz"))
+dimnames(cDNA_mat) <- list(cDNA_data_features_umis, cDNA_data_barcodes_umis)
+
+cDNA_mat_umis <- cDNA_mat[,cells_to_filter]
+
+#Subset for human and mouse rows and calculate number of umis
+H_rows <- grep("_Human", rownames(cDNA_mat_umis), value = TRUE)
+cDNA_umis_H <- cDNA_mat_umis[H_rows,]
+cDNA_umis_sum_H <- colSums(cDNA_umis_H)
+cDNA_umis_feat_H <- colSums(cDNA_umis_H != 0)
+
+
+M_rows <- grep("_Mouse", rownames(cDNA_mat_umis), value = TRUE)
+cDNA_umis_M <- cDNA_mat_umis[M_rows,]
+cDNA_umis_sum_M <- colSums(cDNA_umis_M)
+cDNA_umis_feat_M <- colSums(cDNA_umis_M != 0)
+
+
+
+cDNA_meta_H_M <- data.frame(      nCount_RNA_H = cDNA_umis_sum_H,
+                                  nFeature_umis_RNA_H = cDNA_umis_feat_H,
+                                  nCount_RNA_M = cDNA_umis_sum_M,
+                                  nFeature_umis_RNA_M = cDNA_umis_feat_M,
+                                        cell = colnames(cDNA_mat_umis),
+                                  row.names = colnames(cDNA_mat_umis)) %>%
+                                         replace(is.na(.), 0)
+
+
+metadata <- metadata %>% left_join(cDNA_meta_H_M, by = c("cell_index" = "cell"))
+
+
+
+```
+
+
+
+
+```{r}
+
+
+#Calculate percentages
+
+
+metadata <- metadata %>% mutate(nFeature_gDNA_H_perc = nFeature_gDNA_H/panel_size_gDNA,
+                                nFeature_gDNA_M_perc = nFeature_gDNA_M/panel_size_gDNA,
+                                nFeature_RNA_H_perc = nFeature_RNA_H/panel_size_RNA,
+                                nFeature_RNA_M_perc = nFeature_RNA_M/panel_size_RNA)
+
+
+rownames(metadata) <- metadata$cell
+#Add back to Seurat and save again
+cDNA_data_Seurat@meta.data <- metadata
+saveRDS(cDNA_data_Seurat, paste0(plot_save_dir,"/SDR009_Seurat_max_sbc_1000reads_cut.rds"))
+
+
+```
+
+
+
+
+###Visualize number of cells
+
+```{r}
+
+title = "NCells_per_Type.pdf"
+p <- metadata %>%
+  	ggplot(aes(x=Type, fill=Type)) + 
+  	geom_bar() +
+  	theme_classic() +
+  	theme(axis.text.x = element_text(angle = 45, vjust = 1, hjust=1)) +
+    scale_y_continuous(limits = c(0,2000))+
+  	theme(plot.title = element_text(hjust=0.5, face="bold")) +
+  	ggtitle(title)+
+    labs(x = "Type", y = "Number of cells")+
+    scale_fill_manual(values = group_colors)+
+    guides(fill = "none")
+
+
+ggsave(filename = title, path = plot_save_dir, plot = p, device = "pdf", scale = 1,
+       width = 20, height = 15, units = "cm", dpi = 300)
+p
+
+```
+
+###Genes detected per cell - Violin
+
+```{r}
+
+title = "nGenes_H_Violin_perc.pdf"
+
+p <- metadata %>% 
+  	ggplot(aes(x=Type, y=nFeature_RNA_H_perc, fill=Type)) + 
+  geom_violin(alpha = 0.2, adjust = 3)+
+  geom_boxplot(width = 0.25)+
+  	theme_classic() +
+  	theme(axis.text.x = element_text(angle = 45, vjust = 1, hjust=1)) +
+  	theme(plot.title = element_text(hjust=0.5, face="bold")) +
+    scale_y_continuous(limits = c(0,2))+
+  	ggtitle(title)+
+      labs(x = "Type", y = "Genes per cell")+
+    scale_fill_manual(values = group_colors)+
+    guides(fill = "none")
+
+
+ggsave(filename = title, path = plot_save_dir, plot = p, device = "pdf", scale = 1,
+       width = 20, height = 15, units = "cm", dpi = 300)
+
+p
+
+```
+
+
+
+
+###Genes detected per cell - Violin
+
+```{r}
+
+title = "nGenes_M_Violin_perc.pdf"
+
+p <- metadata %>% 
+  	ggplot(aes(x=Type, y=nFeature_RNA_M_perc, fill=Type)) + 
+  geom_violin(alpha = 0.2, adjust = 3)+
+  geom_boxplot(width = 0.25)+
+  	theme_classic() +
+  	theme(axis.text.x = element_text(angle = 45, vjust = 1, hjust=1)) +
+  	theme(plot.title = element_text(hjust=0.5, face="bold")) +
+    scale_y_continuous(limits = c(0,2))+
+  	ggtitle(title)+
+      labs(x = "Type", y = "Genes per cell")+
+    scale_fill_manual(values = group_colors)+
+    guides(fill = "none")
+
+
+ggsave(filename = title, path = plot_save_dir, plot = p, device = "pdf", scale = 1,
+       width = 20, height = 15, units = "cm", dpi = 300)
+
+p
+
+```
+
+
+
+###Amplicons detected per cell - Violin
+
+```{r}
+
+title = "nAmplicons_H_Violin_perc.pdf"
+
+p <- metadata %>% 
+  	ggplot(aes(x=Type, y=nFeature_gDNA_H_perc, fill=Type)) + 
+  geom_violin(alpha = 0.2, adjust = 3)+
+  geom_boxplot(width = 0.25)+
+  	theme_classic() +
+  	theme(axis.text.x = element_text(angle = 45, vjust = 1, hjust=1)) +
+  	theme(plot.title = element_text(hjust=0.5, face="bold")) +
+    scale_y_continuous(limits = c(0,1))+
+  	ggtitle(title)+
+      labs(x = "Type", y = "Amplicons per cell")+
+    scale_fill_manual(values = group_colors)+
+    guides(fill = "none")
+
+
+ggsave(filename = title, path = plot_save_dir, plot = p, device = "pdf", scale = 1,
+       width = 20, height = 15, units = "cm", dpi = 300)
+
+p
+
+```
+
+
+###Amplicons detected per cell - Violin
+
+```{r}
+
+title = "nAmplicons_M_Violin_perc.pdf"
+
+p <- metadata %>% 
+  	ggplot(aes(x=Type, y=nFeature_gDNA_M_perc, fill=Type)) + 
+  geom_violin(alpha = 0.2, adjust = 3)+
+  geom_boxplot(width = 0.25)+
+  	theme_classic() +
+  	theme(axis.text.x = element_text(angle = 45, vjust = 1, hjust=1)) +
+  	theme(plot.title = element_text(hjust=0.5, face="bold")) +
+    scale_y_continuous(limits = c(0,1))+
+  	ggtitle(title)+
+      labs(x = "Type", y = "Amplicons per cell")+
+    scale_fill_manual(values = group_colors)+
+    guides(fill = "none")
+
+
+ggsave(filename = title, path = plot_save_dir, plot = p, device = "pdf", scale = 1,
+       width = 20, height = 15, units = "cm", dpi = 300)
+
+p
+
+```
+
+
+###UMIs detected per cell - Violin
+
+```{r}
+
+
+title = "nUMIs_H_Violin.pdf"
+
+p <- metadata %>% 
+  	ggplot(aes(x=Type, y=nCount_RNA_H, fill=Type)) + 
+  geom_violin(alpha = 0.2, adjust = 1)+
+  geom_boxplot(width = 0.25)+
+  	theme_classic() +
+  	theme(axis.text.x = element_text(angle = 45, vjust = 1, hjust=1)) +
+  	theme(plot.title = element_text(hjust=0.5, face="bold")) +
+    scale_y_continuous(limits = c(0,6000))+
+  	ggtitle(title)+
+      labs(x = "Type", y = "UMIs per cell (RNA)")+
+    scale_fill_manual(values = group_colors)+
+    guides(fill = "none")
+
+
+ggsave(filename = title, path = plot_save_dir, plot = p, device = "pdf", scale = 1,
+       width = 20, height = 15, units = "cm", dpi = 300)
+
+p
+
+```
+
+
+
+
+###UMIs detected per cell - Violin
+
+```{r}
+
+
+title = "nUMIs_M_Violin.pdf"
+
+p <- metadata %>% 
+  	ggplot(aes(x=Type, y=nCount_RNA_M, fill=Type)) + 
+  geom_violin(alpha = 0.2, adjust = 1)+
+  geom_boxplot(width = 0.25)+
+  	theme_classic() +
+  	theme(axis.text.x = element_text(angle = 45, vjust = 1, hjust=1)) +
+  	theme(plot.title = element_text(hjust=0.5, face="bold")) +
+    scale_y_continuous(limits = c(0,6000))+
+  	ggtitle(title)+
+      labs(x = "Type", y = "UMIs per cell (RNA)")+
+    scale_fill_manual(values = group_colors)+
+    guides(fill = "none")
+
+
+ggsave(filename = title, path = plot_save_dir, plot = p, device = "pdf", scale = 1,
+       width = 20, height = 15, units = "cm", dpi = 300)
+
+p
+
+```
+
+
+###Reads - Amplicon detected per cell - Violin
+
+```{r}
+
+
+title = "nReads_gDNA_H_Violin.pdf"
+
+p <- metadata %>% 
+  	ggplot(aes(x=Type, y=nReads_gDNA_H, fill=Type)) + 
+  geom_violin(alpha = 0.2, adjust = 1)+
+  geom_boxplot(width = 0.25)+
+  	theme_classic() +
+  	theme(axis.text.x = element_text(angle = 45, vjust = 1, hjust=1)) +
+  	theme(plot.title = element_text(hjust=0.5, face="bold")) +
+    scale_y_continuous(limits = c(0,6000))+
+  	ggtitle(title)+
+      labs(x = "Type", y = "Reads per cell (Amplicons)")+
+    scale_fill_manual(values = group_colors)+
+    guides(fill = "none")
+
+
+ggsave(filename = title, path = plot_save_dir, plot = p, device = "pdf", scale = 1,
+       width = 20, height = 15, units = "cm", dpi = 300)
+
+p
+
+
+```
+
+
+
+###Reads - Amplicon detected per cell - Violin
+
+```{r}
+
+
+title = "nReads_gDNA_M_Violin.pdf"
+
+p <- metadata %>% 
+  	ggplot(aes(x=Type, y=nReads_gDNA_M, fill=Type)) + 
+  geom_violin(alpha = 0.2, adjust = 1)+
+  geom_boxplot(width = 0.25)+
+  	theme_classic() +
+  	theme(axis.text.x = element_text(angle = 45, vjust = 1, hjust=1)) +
+  	theme(plot.title = element_text(hjust=0.5, face="bold")) +
+    scale_y_continuous(limits = c(0,6000))+
+  	ggtitle(title)+
+      labs(x = "Type", y = "Reads per cell (Amplicons)")+
+    scale_fill_manual(values = group_colors)+
+    guides(fill = "none")
+
+
+ggsave(filename = title, path = plot_save_dir, plot = p, device = "pdf", scale = 1,
+       width = 20, height = 15, units = "cm", dpi = 300)
+
+p
+
+
+```
+
+
+#Plot ratios of cell barcodes - sbc
+
+
+```{r}
+title = "cDNA_ratio_sbc.pdf"
+
+#Plot sample barcode ratio
+p <- metadata %>%
+ ggplot(aes(x=Type, y=cDNA_ratio_sbc, fill = Type))+
+  geom_violin(alpha = 0.2)+
+  geom_boxplot(width = 0.25)+
+  	theme_classic() +
+  	theme(axis.text.x = element_text(angle = 45, vjust = 1, hjust=1)) +
+  	theme(plot.title = element_text(hjust=0.5, face="bold")) +
+    scale_y_continuous(limits = c(0.5,1))+
+  	ggtitle(title)+
+      labs(x = "Type", y = "% of maximum sample barcode per cell")+
+    scale_fill_manual(values = group_colors)+
+    guides(fill = "none")
+
+p 
+
+ggsave(filename = title, path = plot_save_dir, plot = p, device = "pdf", scale = 1,
+       width = 20, height = 15, units = "cm", dpi = 300)
+
+
+
+```
+
+
+
+#Plot - gDNA
+
+```{r}
+
+title = "nCount_RNA-nReads_gDNA-nFeature_gDNA_perc_gDNA_H.pdf"
+p <- metadata %>% 
+  	ggplot(aes(x=nCount_RNA, y=nReads_gDNA, color=nFeature_gDNA_H_perc)) + 
+  	geom_point() + 
+	scale_colour_gradient(low = "gray90", high = "#990000", limits = c(0,1)) +
+  #xlim(c(0,30))+
+    #ylim(c(0,30))+
+  	scale_x_log10(limits = c(1,100000)) + 
+  	scale_y_log10(limits = c(1,100000)) + 
+  	theme_classic() +
+  	#geom_vline(xintercept = 10) +
+  	#geom_hline(yintercept = 10) +
+    	theme(plot.title = element_text(hjust=0.5, face="bold")) +
+  	ggtitle(title)
+  	#facet_wrap(~Type)
+
+p
+
+ggsave(filename = title, path = plot_save_dir, plot = p, device = "pdf", scale = 1,
+       width = 15, height = 15, units = "cm", dpi = 300)
+
+
+```
+
+
+
+
+#Plot - gDNA
+
+```{r}
+
+title = "nCount_RNA-nReads_gDNA-nFeature_gDNA_perc_gDNA_M.pdf"
+p <- metadata %>% 
+  	ggplot(aes(x=nCount_RNA, y=nReads_gDNA, color=nFeature_gDNA_M_perc)) + 
+  	geom_point() + 
+	scale_colour_gradient(low = "gray90", high = "#990000", limits = c(0,1)) +
+  #xlim(c(0,30))+
+    #ylim(c(0,30))+
+  	scale_x_log10(limits = c(1,100000)) + 
+  	scale_y_log10(limits = c(1,100000)) + 
+  	theme_classic() +
+  	#geom_vline(xintercept = 10) +
+  	#geom_hline(yintercept = 10) +
+    	theme(plot.title = element_text(hjust=0.5, face="bold")) +
+  	ggtitle(title)
+  	#facet_wrap(~Type)
+
+p
+
+ggsave(filename = title, path = plot_save_dir, plot = p, device = "pdf", scale = 1,
+       width = 15, height = 15, units = "cm", dpi = 300)
+
+
+```
+
+
+
+
+
+
+
+#Plot - RNA
+
+```{r}
+
+title = "nCount_RNA-nReads_gDNA-nFeature_gDNA_perc_RNA_H.pdf"
+p <- metadata %>% 
+  	ggplot(aes(x=nCount_RNA, y=nReads_gDNA, color=nFeature_RNA_H_perc)) + 
+  	geom_point() + 
+	scale_colour_gradient(low = "gray90", high = "#990000", limits = c(0,2)) +
+  #xlim(c(0,30))+
+    #ylim(c(0,30))+
+  	scale_x_log10(limits = c(1,100000)) + 
+  	scale_y_log10(limits = c(1,100000)) + 
+  	theme_classic() +
+  	#geom_vline(xintercept = 10) +
+  	#geom_hline(yintercept = 10) +
+    	theme(plot.title = element_text(hjust=0.5, face="bold")) +
+  	ggtitle(title)
+  	#facet_wrap(~Type)
+
+p
+
+ggsave(filename = title, path = plot_save_dir, plot = p, device = "pdf", scale = 1,
+       width = 15, height = 15, units = "cm", dpi = 300)
+
+
+```
+
+#Plot - RNA
+
+```{r}
+
+title = "nCount_RNA-nReads_gDNA-nFeature_gDNA_perc_RNA_M.pdf"
+p <- metadata %>% 
+  	ggplot(aes(x=nCount_RNA, y=nReads_gDNA, color=nFeature_RNA_M_perc)) + 
+  	geom_point() + 
+	scale_colour_gradient(low = "gray90", high = "#990000", limits = c(0,2)) +
+  #xlim(c(0,30))+
+    #ylim(c(0,30))+
+  	scale_x_log10(limits = c(1,100000)) + 
+  	scale_y_log10(limits = c(1,100000)) + 
+  	theme_classic() +
+  	#geom_vline(xintercept = 10) +
+  	#geom_hline(yintercept = 10) +
+    	theme(plot.title = element_text(hjust=0.5, face="bold")) +
+  	ggtitle(title)
+  	#facet_wrap(~Type)
+
+p
+
+ggsave(filename = title, path = plot_save_dir, plot = p, device = "pdf", scale = 1,
+       width = 15, height = 15, units = "cm", dpi = 300)
+
+
+```
+
+
+#Plot - sbc
+
+```{r}
+
+title = "nCount_RNA-nReads_gDNA-nFeature_gDNA_perc_sbc.pdf"
+p <- metadata %>% 
+  	ggplot(aes(x=nCount_RNA, y=nReads_gDNA, color=cDNA_ratio_sbc)) + 
+  	geom_point() + 
+	scale_colour_gradient(low = "gray90", high = "#990000", limits = c(0,1)) +
+  #xlim(c(0,30))+
+    #ylim(c(0,30))+
+  	scale_x_log10(limits = c(1,100000)) + 
+  	scale_y_log10(limits = c(1,100000)) + 
+  	theme_classic() +
+  	#geom_vline(xintercept = 10) +
+  	#geom_hline(yintercept = 10) +
+    	theme(plot.title = element_text(hjust=0.5, face="bold")) +
+  	ggtitle(title)
+  	#facet_wrap(~Type)
+
+p
+
+ggsave(filename = title, path = plot_save_dir, plot = p, device = "pdf", scale = 1,
+       width = 15, height = 15, units = "cm", dpi = 300)
+
+
+```
+
+
+
+#Subset - remove cells without the highest cell barcode - select cells for sbc and CROP ratio and features
+
+```{r}
+
+cDNA_data_Seurat <- readRDS( paste0(plot_save_dir,"/SDR009_Seurat_max_sbc_1000reads_cut.rds"))
+
+
+#cDNA_data_Seurat <- subset(x = cDNA_data_Seurat, subset = nFeature_RNA >= panel_size_RNA*0.6)
+#cDNA_data_Seurat <- subset(x = cDNA_data_Seurat, subset = nFeature_RNA <= panel_size)
+#cDNA_data_Seurat <- subset(x = cDNA_data_Seurat, subset = nFeature_gDNA >= panel_size_gDNA*0.80)
+#cDNA_data_Seurat <- subset(x = cDNA_data_Seurat, subset = cDNA_ratio_sbc >= 0.85)
+#cDNA_data_Seurat <- subset(x = cDNA_data_Seurat, subset = nFeature_gDNA <= panel_size)
+#cDNA_data_Seurat <- subset(x = cDNA_data_Seurat, subset = nCount_RNA >= 200)
+#cDNA_data_Seurat <- subset(x = cDNA_data_Seurat, subset = nCount_RNA <= 5000)
+
+
+cDNA_data_Seurat <- subset(x = cDNA_data_Seurat, subset = cDNA_ratio_sbc >= 0.88)
+
+cDNA_data_Seurat <- subset(x = cDNA_data_Seurat, subset = (nFeature_RNA_H >= 20) | (nFeature_RNA_M >= 20))
+
+cDNA_data_Seurat <- subset(x = cDNA_data_Seurat, subset = (nFeature_gDNA_H >= 20) | (nFeature_gDNA_M >= 20))
+
+cDNA_data_Seurat <- subset(x = cDNA_data_Seurat, subset = 
+   ((nReads_gDNA_H >= 500) & (nReads_gDNA_H <= 2500)) | 
+   ((nReads_gDNA_M >= 500) & (nReads_gDNA_M <= 2500))
+)
+
+cDNA_data_Seurat <- subset(x = cDNA_data_Seurat, subset = nReads_gDNA <= 2500)
+
+cDNA_data_Seurat <- subset(x = cDNA_data_Seurat, subset = (nReads_RNA_H >= 500) | (nReads_RNA_M >= 500))
+
+cDNA_data_Seurat <- subset(x = cDNA_data_Seurat, subset = 
+   ((nCount_RNA_H >= 200) & (nCount_RNA_H <= 2000)) | 
+   ((nCount_RNA_M >= 150) & (nCount_RNA_M <= 1700))
+)
+
+cDNA_data_Seurat <- subset(x = cDNA_data_Seurat, subset = nCount_RNA <= 2000)
+
+
+
+
+ 
+
+saveRDS(cDNA_data_Seurat, paste0(plot_save_dir,"/SDR009_Seurat_filtered.rds"))
+
+#cDNA_data_Seurat <- subset(x = cDNA_data_Seurat, subset = nCount_RNA >= 100)
+
+
+cDNA_data_Seurat <- readRDS(paste0(plot_save_dir,"/SDR009_Seurat_filtered.rds"))
+metadata <- cDNA_data_Seurat@meta.data
+sbc_annot <- read.csv("REF_lists/SDR009_sbcs.csv")
+to_order <- sbc_annot$Sample
+metadata$Type <- factor(metadata$Type, levels = to_order)
+
+
+```
+
+
+
+
+###Visualize number of cells
+
+```{r}
+
+title = "NCells_per_Type_filtered.pdf"
+p <- metadata %>%
+  	ggplot(aes(x=Type, fill=Type)) + 
+  	geom_bar() +
+  	theme_classic() +
+  	theme(axis.text.x = element_text(angle = 45, vjust = 1, hjust=1)) +
+    scale_y_continuous(limits = c(0,2000))+
+  	theme(plot.title = element_text(hjust=0.5, face="bold")) +
+  	ggtitle(title)+
+    labs(x = "Type", y = "Number of cells")+
+    scale_fill_manual(values = group_colors)+
+    guides(fill = "none")
+
+
+ggsave(filename = title, path = plot_save_dir, plot = p, device = "pdf", scale = 1,
+       width = 20, height = 15, units = "cm", dpi = 300)
+p
+
+```
+
+
+###Genes detected per cell - Violin
+
+```{r}
+
+title = "nGenes_H_Violin_perc_filtered.pdf"
+
+p <- metadata %>% 
+  	ggplot(aes(x=Type, y=nFeature_RNA_H_perc, fill=Type)) + 
+  geom_violin(alpha = 0.2, adjust = 3)+
+  geom_boxplot(width = 0.25)+
+  	theme_classic() +
+  	theme(axis.text.x = element_text(angle = 45, vjust = 1, hjust=1)) +
+  	theme(plot.title = element_text(hjust=0.5, face="bold")) +
+    scale_y_continuous(limits = c(0,2))+
+  	ggtitle(title)+
+      labs(x = "Type", y = "Genes per cell")+
+    scale_fill_manual(values = group_colors)+
+    guides(fill = "none")
+
+
+ggsave(filename = title, path = plot_save_dir, plot = p, device = "pdf", scale = 1,
+       width = 20, height = 15, units = "cm", dpi = 300)
+
+p
+
+```
+
+
+
+
+###Genes detected per cell - Violin
+
+```{r}
+
+title = "nGenes_M_Violin_perc_filtered.pdf"
+
+p <- metadata %>% 
+  	ggplot(aes(x=Type, y=nFeature_RNA_M_perc, fill=Type)) + 
+  geom_violin(alpha = 0.2, adjust = 3)+
+  geom_boxplot(width = 0.25)+
+  	theme_classic() +
+  	theme(axis.text.x = element_text(angle = 45, vjust = 1, hjust=1)) +
+  	theme(plot.title = element_text(hjust=0.5, face="bold")) +
+    scale_y_continuous(limits = c(0,2))+
+  	ggtitle(title)+
+      labs(x = "Type", y = "Genes per cell")+
+    scale_fill_manual(values = group_colors)+
+    guides(fill = "none")
+
+
+ggsave(filename = title, path = plot_save_dir, plot = p, device = "pdf", scale = 1,
+       width = 20, height = 15, units = "cm", dpi = 300)
+
+p
+
+```
+
+
+
+###Amplicons detected per cell - Violin
+
+```{r}
+
+title = "nAmplicons_H_Violin_perc_filtered.pdf"
+
+p <- metadata %>% 
+  	ggplot(aes(x=Type, y=nFeature_gDNA_H_perc, fill=Type)) + 
+  geom_violin(alpha = 0.2, adjust = 3)+
+  geom_boxplot(width = 0.25)+
+  	theme_classic() +
+  	theme(axis.text.x = element_text(angle = 45, vjust = 1, hjust=1)) +
+  	theme(plot.title = element_text(hjust=0.5, face="bold")) +
+    scale_y_continuous(limits = c(0,1))+
+  	ggtitle(title)+
+      labs(x = "Type", y = "Amplicons per cell")+
+    scale_fill_manual(values = group_colors)+
+    guides(fill = "none")
+
+
+ggsave(filename = title, path = plot_save_dir, plot = p, device = "pdf", scale = 1,
+       width = 20, height = 15, units = "cm", dpi = 300)
+
+p
+
+```
+
+
+###Amplicons detected per cell - Violin
+
+```{r}
+
+title = "nAmplicons_M_Violin_perc_filtered.pdf"
+
+p <- metadata %>% 
+  	ggplot(aes(x=Type, y=nFeature_gDNA_M_perc, fill=Type)) + 
+  geom_violin(alpha = 0.2, adjust = 3)+
+  geom_boxplot(width = 0.25)+
+  	theme_classic() +
+  	theme(axis.text.x = element_text(angle = 45, vjust = 1, hjust=1)) +
+  	theme(plot.title = element_text(hjust=0.5, face="bold")) +
+    scale_y_continuous(limits = c(0,1))+
+  	ggtitle(title)+
+      labs(x = "Type", y = "Amplicons per cell")+
+    scale_fill_manual(values = group_colors)+
+    guides(fill = "none")
+
+
+ggsave(filename = title, path = plot_save_dir, plot = p, device = "pdf", scale = 1,
+       width = 20, height = 15, units = "cm", dpi = 300)
+
+p
+
+```
+
+
+###UMIs detected per cell - Violin
+
+```{r}
+
+
+title = "nUMIs_H_Violin_filtered.pdf"
+
+p <- metadata %>% 
+  	ggplot(aes(x=Type, y=nCount_RNA_H, fill=Type)) + 
+  geom_violin(alpha = 0.2, adjust = 1)+
+  geom_boxplot(width = 0.25)+
+  	theme_classic() +
+  	theme(axis.text.x = element_text(angle = 45, vjust = 1, hjust=1)) +
+  	theme(plot.title = element_text(hjust=0.5, face="bold")) +
+    scale_y_continuous(limits = c(0,6000))+
+  	ggtitle(title)+
+      labs(x = "Type", y = "UMIs per cell (RNA)")+
+    scale_fill_manual(values = group_colors)+
+    guides(fill = "none")
+
+
+ggsave(filename = title, path = plot_save_dir, plot = p, device = "pdf", scale = 1,
+       width = 20, height = 15, units = "cm", dpi = 300)
+
+p
+
+```
+
+
+
+
+###UMIs detected per cell - Violin
+
+```{r}
+
+
+title = "nUMIs_M_Violin_filtered.pdf"
+
+p <- metadata %>% 
+  	ggplot(aes(x=Type, y=nCount_RNA_M, fill=Type)) + 
+  geom_violin(alpha = 0.2, adjust = 1)+
+  geom_boxplot(width = 0.25)+
+  	theme_classic() +
+  	theme(axis.text.x = element_text(angle = 45, vjust = 1, hjust=1)) +
+  	theme(plot.title = element_text(hjust=0.5, face="bold")) +
+    scale_y_continuous(limits = c(0,6000))+
+  	ggtitle(title)+
+      labs(x = "Type", y = "UMIs per cell (RNA)")+
+    scale_fill_manual(values = group_colors)+
+    guides(fill = "none")
+
+
+ggsave(filename = title, path = plot_save_dir, plot = p, device = "pdf", scale = 1,
+       width = 20, height = 15, units = "cm", dpi = 300)
+
+p
+
+```
+
+
+###Reads - Amplicon detected per cell - Violin
+
+```{r}
+
+
+title = "nReads_gDNA_H_Violin_filtered.pdf"
+
+p <- metadata %>% 
+  	ggplot(aes(x=Type, y=nReads_gDNA_H, fill=Type)) + 
+  geom_violin(alpha = 0.2, adjust = 1)+
+  geom_boxplot(width = 0.25)+
+  	theme_classic() +
+  	theme(axis.text.x = element_text(angle = 45, vjust = 1, hjust=1)) +
+  	theme(plot.title = element_text(hjust=0.5, face="bold")) +
+    scale_y_continuous(limits = c(0,6000))+
+  	ggtitle(title)+
+      labs(x = "Type", y = "Reads per cell (Amplicons)")+
+    scale_fill_manual(values = group_colors)+
+    guides(fill = "none")
+
+
+ggsave(filename = title, path = plot_save_dir, plot = p, device = "pdf", scale = 1,
+       width = 20, height = 15, units = "cm", dpi = 300)
+
+p
+
+
+```
+
+
+
+###Reads - Amplicon detected per cell - Violin
+
+```{r}
+
+
+title = "nReads_gDNA_M_Violin_filtered.pdf"
+
+p <- metadata %>% 
+  	ggplot(aes(x=Type, y=nReads_gDNA_M, fill=Type)) + 
+  geom_violin(alpha = 0.2, adjust = 1)+
+  geom_boxplot(width = 0.25)+
+  	theme_classic() +
+  	theme(axis.text.x = element_text(angle = 45, vjust = 1, hjust=1)) +
+  	theme(plot.title = element_text(hjust=0.5, face="bold")) +
+    scale_y_continuous(limits = c(0,6000))+
+  	ggtitle(title)+
+      labs(x = "Type", y = "Reads per cell (Amplicons)")+
+    scale_fill_manual(values = group_colors)+
+    guides(fill = "none")
+
+
+ggsave(filename = title, path = plot_save_dir, plot = p, device = "pdf", scale = 1,
+       width = 20, height = 15, units = "cm", dpi = 300)
+
+p
+
+
+```
+
+
+#Plot ratios of cell barcodes - sbc
+
+
+```{r}
+title = "cDNA_ratio_sbc_filtered.pdf"
+
+#Plot sample barcode ratio
+p <- metadata %>%
+ ggplot(aes(x=Type, y=cDNA_ratio_sbc, fill = Type))+
+  geom_violin(alpha = 0.2)+
+  geom_boxplot(width = 0.25)+
+  	theme_classic() +
+  	theme(axis.text.x = element_text(angle = 45, vjust = 1, hjust=1)) +
+  	theme(plot.title = element_text(hjust=0.5, face="bold")) +
+    scale_y_continuous(limits = c(0.5,1))+
+  	ggtitle(title)+
+      labs(x = "Type", y = "% of maximum sample barcode per cell")+
+    scale_fill_manual(values = group_colors)+
+    guides(fill = "none")
+
+p 
+
+ggsave(filename = title, path = plot_save_dir, plot = p, device = "pdf", scale = 1,
+       width = 20, height = 15, units = "cm", dpi = 300)
+
+
+
+```
+
+
+
+#Plot - gDNA
+
+```{r}
+
+title = "nCount_RNA-nReads_gDNA-nFeature_gDNA_perc_gDNA_H_filtered.pdf"
+p <- metadata %>% 
+  	ggplot(aes(x=nCount_RNA, y=nReads_gDNA, color=nFeature_gDNA_H_perc)) + 
+  	geom_point() + 
+	scale_colour_gradient(low = "gray90", high = "#990000", limits = c(0,1)) +
+  #xlim(c(0,30))+
+    #ylim(c(0,30))+
+  	scale_x_log10(limits = c(1,100000)) + 
+  	scale_y_log10(limits = c(1,100000)) + 
+  	theme_classic() +
+  	#geom_vline(xintercept = 10) +
+  	#geom_hline(yintercept = 10) +
+    	theme(plot.title = element_text(hjust=0.5, face="bold")) +
+  	ggtitle(title)
+  	#facet_wrap(~Type)
+
+p
+
+ggsave(filename = title, path = plot_save_dir, plot = p, device = "pdf", scale = 1,
+       width = 15, height = 15, units = "cm", dpi = 300)
+
+
+```
+
+
+
+
+#Plot - gDNA
+
+```{r}
+
+title = "nCount_RNA-nReads_gDNA-nFeature_gDNA_perc_gDNA_M_filtered.pdf"
+p <- metadata %>% 
+  	ggplot(aes(x=nCount_RNA, y=nReads_gDNA, color=nFeature_gDNA_M_perc)) + 
+  	geom_point() + 
+	scale_colour_gradient(low = "gray90", high = "#990000", limits = c(0,1)) +
+  #xlim(c(0,30))+
+    #ylim(c(0,30))+
+  	scale_x_log10(limits = c(1,100000)) + 
+  	scale_y_log10(limits = c(1,100000)) + 
+  	theme_classic() +
+  	#geom_vline(xintercept = 10) +
+  	#geom_hline(yintercept = 10) +
+    	theme(plot.title = element_text(hjust=0.5, face="bold")) +
+  	ggtitle(title)
+  	#facet_wrap(~Type)
+
+p
+
+ggsave(filename = title, path = plot_save_dir, plot = p, device = "pdf", scale = 1,
+       width = 15, height = 15, units = "cm", dpi = 300)
+
+
+```
+
+
+
+
+
+
+
+#Plot - RNA
+
+```{r}
+
+title = "nCount_RNA-nReads_gDNA-nFeature_gDNA_perc_RNA_H_filtered.pdf"
+p <- metadata %>% 
+  	ggplot(aes(x=nCount_RNA, y=nReads_gDNA, color=nFeature_RNA_H_perc)) + 
+  	geom_point() + 
+	scale_colour_gradient(low = "gray90", high = "#990000", limits = c(0,2)) +
+  #xlim(c(0,30))+
+    #ylim(c(0,30))+
+  	scale_x_log10(limits = c(1,100000)) + 
+  	scale_y_log10(limits = c(1,100000)) + 
+  	theme_classic() +
+  	#geom_vline(xintercept = 10) +
+  	#geom_hline(yintercept = 10) +
+    	theme(plot.title = element_text(hjust=0.5, face="bold")) +
+  	ggtitle(title)
+  	#facet_wrap(~Type)
+
+p
+
+ggsave(filename = title, path = plot_save_dir, plot = p, device = "pdf", scale = 1,
+       width = 15, height = 15, units = "cm", dpi = 300)
+
+
+```
+
+#Plot - RNA
+
+```{r}
+
+title = "nCount_RNA-nReads_gDNA-nFeature_gDNA_perc_RNA_M_filtered.pdf"
+p <- metadata %>% 
+  	ggplot(aes(x=nCount_RNA, y=nReads_gDNA, color=nFeature_RNA_M_perc)) + 
+  	geom_point() + 
+	scale_colour_gradient(low = "gray90", high = "#990000", limits = c(0,2)) +
+  #xlim(c(0,30))+
+    #ylim(c(0,30))+
+  	scale_x_log10(limits = c(1,100000)) + 
+  	scale_y_log10(limits = c(1,100000)) + 
+  	theme_classic() +
+  	#geom_vline(xintercept = 10) +
+  	#geom_hline(yintercept = 10) +
+    	theme(plot.title = element_text(hjust=0.5, face="bold")) +
+  	ggtitle(title)
+  	#facet_wrap(~Type)
+
+p
+
+ggsave(filename = title, path = plot_save_dir, plot = p, device = "pdf", scale = 1,
+       width = 15, height = 15, units = "cm", dpi = 300)
+
+
+```
+
+
+#Plot - sbc
+
+```{r}
+
+title = "nCount_RNA-nReads_gDNA-nFeature_gDNA_perc_sbc_filtered.pdf"
+p <- metadata %>% 
+  	ggplot(aes(x=nCount_RNA, y=nReads_gDNA, color=cDNA_ratio_sbc)) + 
+  	geom_point() + 
+	scale_colour_gradient(low = "gray90", high = "#990000", limits = c(0,1)) +
+  #xlim(c(0,30))+
+    #ylim(c(0,30))+
+  	scale_x_log10(limits = c(1,100000)) + 
+  	scale_y_log10(limits = c(1,100000)) + 
+  	theme_classic() +
+  	#geom_vline(xintercept = 10) +
+  	#geom_hline(yintercept = 10) +
+    	theme(plot.title = element_text(hjust=0.5, face="bold")) +
+  	ggtitle(title)
+  	#facet_wrap(~Type)
+
+p
+
+ggsave(filename = title, path = plot_save_dir, plot = p, device = "pdf", scale = 1,
+       width = 15, height = 15, units = "cm", dpi = 300)
+
+
+```
+
+
+
+
+
+#Contaminiation plots
+
+```{r}
+
+#Load again
+cDNA_data_Seurat <- readRDS(paste0(plot_save_dir,"/SDR009_Seurat_filtered.rds"))
+metadata <- cDNA_data_Seurat@meta.data
+sbc_annot <- read.csv("REF_lists/SDR009_sbcs.csv")
+to_order <- sbc_annot$Sample
+metadata$Type <- factor(metadata$Type, levels = to_order)
+
+
+group_colors_Type3 <- c("WTC11" = "#2C3930", "NIH3T3" = "#A27B5C", "Mix" = "#EADFB4", "Doublet" = "gray40")
+to_order_Type2 <- c("WTC11" , "NIH3T3" , "Mix" )
+metadata$Type2 <- factor(metadata$Type2, levels = to_order_Type2)
+
+metadata <- metadata %>% mutate(nCount_RNA_H_M_ratio = nCount_RNA_H/nCount_RNA_M)
+
+#metadata <- metadata %>% mutate(Type3 = case_when(nFeature_gDNA_H > 10 & nFeature_gDNA_M < 10 ~ "WTC11",
+#                                                  nFeature_gDNA_M > 10 & nFeature_gDNA_H < 10 ~ "NIH3T3"))
+
+#Annotate cells as human or mouse 
+
+#metadata <- metadata %>% mutate(nCount_RNA_H_M_ratio = nCount_RNA_H/nCount_RNA_M)
+
+
+metadata <- metadata %>% mutate(gDNA_cont_M = nReads_gDNA_M/nReads_gDNA,
+                                gDNA_cont_H = nReads_gDNA_H/nReads_gDNA,
+                                RNA_reads_cont_M = nReads_RNA_M/nReads_RNA,
+                                RNA_reads_cont_H = nReads_RNA_H/nReads_RNA,
+                                RNA_umis_cont_M = nCount_RNA_M/nCount_RNA,
+                                RNA_umis_cont_H = nCount_RNA_H/nCount_RNA)
+                            
+                                                     
+
+metadata <- metadata %>% mutate(Type3 = case_when((gDNA_cont_M > 0.9 & gDNA_cont_H < 0.1) &
+                                                  (RNA_reads_cont_M > 0.9 & RNA_reads_cont_H < 0.1) &
+                                                  (RNA_umis_cont_M > 0.9 & RNA_umis_cont_H < 0.1) ~ "NIH3T3",
+                                                  (gDNA_cont_H > 0.9 & gDNA_cont_M < 0.1) &
+                                                  (RNA_reads_cont_H > 0.9 & RNA_reads_cont_M < 0.1) &
+                                                  (RNA_umis_cont_H > 0.9 & RNA_umis_cont_M < 0.1) ~ "WTC11",
+                                                  TRUE ~ "Doublet"))
+
+
+
+metadata <- metadata %>% mutate(Type4 = case_when((gDNA_cont_M > 0.5 & gDNA_cont_H < 0.5) &
+                                                  (RNA_reads_cont_M > 0.5 & RNA_reads_cont_H < 0.5) &
+                                                  (RNA_umis_cont_M > 0.5 & RNA_umis_cont_H < 0.5) ~ "NIH3T3",
+                                                  (gDNA_cont_H > 0.5 & gDNA_cont_M < 0.5) &
+                                                  (RNA_reads_cont_H > 0.5 & RNA_reads_cont_M < 0.5) &
+                                                  (RNA_umis_cont_H > 0.5 & RNA_umis_cont_M < 0.5) ~ "WTC11",
+                                                  TRUE ~ "Doublet"))
+check_Type3 <- table(metadata$Type3)
+check_Type3
+check_Type4 <- table(metadata$Type4)
+check_Type4 
+#metadata <- metadata %>% filter(cDNA_ratio_sbc > 0.9)
+```
+
+
+gDNA
+```{r}
+
+
+title = "gDNA_nReads_H_vs_nReads_M_only_max_sbc.pdf"
+p <- metadata  %>% 
+  	ggplot(aes(x=nReads_gDNA_H, y=nReads_gDNA_M, color = Type3)) + 
+  	geom_point(size =1) + 
+	#scale_colour_gradient(low = "gray90", high = "#990000", limits = c(0,1)) +
+  #xlim(c(0,30))+
+    #ylim(c(0,30))+
+  	#scale_x_log10(limits = c(1,10000)) + 
+  	#scale_y_log10(limits = c(1,10000)) + 
+    scale_y_continuous(limits = c(0,2600))+
+    scale_x_continuous(limits = c(0,2600))+
+  	theme_classic() +
+  	#geom_vline(xintercept = 10) +
+  	#geom_hline(yintercept = 10) +
+    	theme(plot.title = element_text(hjust=0.5, face="bold")) +
+      labs(x = "nReads/cell (WTC11)", y =  "nReads/cell (NIH3T3)")+
+    	facet_wrap(~Type2)+
+        scale_color_manual(values = group_colors_Type3)+
+  guides(color = "none")+
+  	ggtitle(title)
+
+
+p
+
+ggsave(filename = title, path = plot_save_dir, plot = p, device = "pdf", scale = 1,
+       width = 45, height = 15, units = "cm", dpi = 300)
+
+
+to_file <- metadata %>% dplyr::select(cell, 
+                                      nReads_gDNA_Human = nReads_gDNA_H,
+                                      nReads_gDNA_Mouse = nReads_gDNA_M,
+                                      Type = Type2,
+                                      Cell_annot = Type3)
+file_name = "Fig1_S2_l_gDNA_H_vs_M_with_sbc_rem.csv"
+write.csv(to_file, paste0(file_save_dir, "/", file_name), row.names = FALSE) 
+
+```
+
+
+
+
+RNA - reads
+
+```{r}
+title = "RNA_nReads_H_vs_nReads_M_only_max_sbc.pdf"
+p <- metadata  %>% 
+  	ggplot(aes(x=nReads_RNA_H, y=nReads_RNA_M, color = Type3)) + 
+  	geom_point(size = 1) + 
+	#scale_colour_gradient(low = "gray90", high = "#990000", limits = c(0,1)) +
+  #xlim(c(0,30))+
+    #ylim(c(0,30))+
+  	#scale_x_log10(limits = c(1,10000)) + 
+  	#scale_y_log10(limits = c(1,10000)) + 
+    scale_y_continuous(limits = c(0,15000))+
+    scale_x_continuous(limits = c(0,15000))+
+  	theme_classic() +
+  	#geom_vline(xintercept = 10) +
+  	#geom_hline(yintercept = 10) +
+    	theme(plot.title = element_text(hjust=0.5, face="bold")) +
+      labs(x = "nReads/cell (WTC11)", y =  "nReads/cell (NIH3T3)")+
+    	facet_wrap(~Type2)+
+        scale_color_manual(values = group_colors_Type3)+
+  guides(color = "none")+
+  	ggtitle(title)
+
+
+p
+
+ggsave(filename = title, path = plot_save_dir, plot = p, device = "pdf", scale = 1,
+       width = 45, height = 15, units = "cm", dpi = 300)
+```
+
+RNA - umis
+
+```{r}
+title = "RNA_nUMIs_H_vs_nUMIs_M_only_max_sbc.pdf"
+p <- metadata  %>% 
+  	ggplot(aes(x=nCount_RNA_H, y=nCount_RNA_M, color = Type3)) + 
+    #	ggplot(aes(x=nCount_RNA_H, y=nCount_RNA_M, color = cDNA_ratio_sbc)) + 
+  	geom_point(size = 1) + 
+	#scale_colour_gradient(low = "gray90", high = "#990000", limits = c(0,1)) +
+  #xlim(c(0,30))+
+    #ylim(c(0,30))+
+  	#scale_x_log10(limits = c(1,10000)) + 
+  	#scale_y_log10(limits = c(1,10000)) + 
+    scale_y_continuous(limits = c(0,2600))+
+    scale_x_continuous(limits = c(0,2600))+
+  	theme_classic() +
+  	#geom_vline(xintercept = 10) +
+  	#geom_hline(yintercept = 10) +
+    	theme(plot.title = element_text(hjust=0.5, face="bold")) +
+      labs(x = "nUMIs/cell (WTC11)", y =  "nUMIs/cell (NIH3T3)")+
+    	facet_wrap(~Type2)+
+        scale_color_manual(values = group_colors_Type3)+
+  guides(color = "none")+
+  	ggtitle(title)
+
+
+p
+
+ggsave(filename = title, path = plot_save_dir, plot = p, device = "pdf", scale = 1,
+       width = 45, height = 15, units = "cm", dpi = 300)
+
+
+to_file <- metadata %>% dplyr::select(cell, 
+                                      nCount_RNA_Human = nCount_RNA_H,
+                                      nCount_RNA_Mouse = nCount_RNA_M,
+                                      Type = Type2,
+                                      Cell_annot = Type3)
+file_name = "Fig1_S2_n_RNA_H_vs_M_with_sbc_rem.csv"
+write.csv(to_file, paste0(file_save_dir, "/", file_name), row.names = FALSE) 
+
+
+```
+
+
+
+
+#Check cell annotation 
+
+```{r}
+
+
+to_order_Type3 <- c("WTC11", "NIH3T3", "Doublet")
+metadata$Type3 <- factor(metadata$Type3, levels = to_order_Type3)
+metadata$Type4 <- factor(metadata$Type4, levels = to_order_Type3)
+
+
+title = "NCells_per_Type_filtered_annotated.pdf"
+p <- metadata %>%
+  	ggplot(aes(x=Type2, fill=Type3)) + 
+  	geom_bar(position = "stack") +
+  	theme_classic() +
+  	theme(axis.text.x = element_text(angle = 45, vjust = 1, hjust=1)) +
+    scale_y_continuous(limits = c(0,10000))+
+  	theme(plot.title = element_text(hjust=0.5, face="bold")) +
+  	ggtitle(title)+
+    labs(x = "Type", y = "Number of cells")+
+    scale_fill_manual(values = group_colors_Type3)+
+  #facet_wrap(~Type2)+
+    guides(fill = "none")
+
+p
+
+ggsave(filename = title, path = plot_save_dir, plot = p, device = "pdf", scale = 1,
+       width = 10, height = 15, units = "cm", dpi = 300)
+
+
+title = "NCells_per_Type_filtered_annotated_with_legend.pdf"
+p <- metadata %>%
+  	ggplot(aes(x=Type2, fill=Type3)) + 
+  	geom_bar(position = "stack") +
+  	theme_classic() +
+  	theme(axis.text.x = element_text(angle = 45, vjust = 1, hjust=1)) +
+    scale_y_continuous(limits = c(0,10000))+
+  	theme(plot.title = element_text(hjust=0.5, face="bold")) +
+  	ggtitle(title)+
+    labs(x = "Type", y = "Number of cells")+
+    scale_fill_manual(values = group_colors_Type3)
+  #facet_wrap(~Type2)+
+   # guides(fill = "none")
+
+p
+
+ggsave(filename = title, path = plot_save_dir, plot = p, device = "pdf", scale = 1,
+       width = 10, height = 15, units = "cm", dpi = 300)
+
+
+
+
+
+perc_doublets <- metadata %>%
+  group_by(Type2, Type3) %>%
+  summarize(count = n(), .groups = "drop") %>%
+  mutate(fraction = count / sum(count)*100)
+
+
+to_file <- metadata %>% dplyr::select(cell, 
+                                      Type = Type2,
+                                      Cell_annot = Type3
+                                      )
+file_name = "Fig1_S2_h_Bargrahp_with_sbc_rem.csv"
+write.csv(to_file, paste0(file_save_dir, "/", file_name), row.names = FALSE) 
+
+
+```
+
+
+
+
+
+
+
+#Calculate fraction of contaminating reads
+gDNA
+```{r}
+
+
+group_colors_Type3 <- c("WTC11" = "#2C3930", "NIH3T3" = "#A27B5C", "Mix" = "#EADFB4", "Doublet" = "gray40")
+
+
+library(ggpattern)
+to_order_Type3 <- c("WTC11", "NIH3T3", "Mix")
+metadata$Type2 <- factor(metadata$Type2, levels = to_order_Type3)
+
+metadata <- metadata %>% mutate(gDNA_cont = case_when(Type3 == "WTC11" ~ nReads_gDNA_M/nReads_gDNA,
+                                                      Type3 == "NIH3T3" ~ nReads_gDNA_H/nReads_gDNA))
+
+
+
+title = "gDNA_cont_H_M.pdf"
+
+
+p <- metadata %>%
+ ggplot(aes(x=Type2, y=gDNA_cont, fill = Type2))+
+  #geom_violin(alpha = 0.2, adjust = 1)+
+  geom_boxplot(width = 0.75)+
+  	theme_classic() +
+  	theme(axis.text.x = element_text(angle = 45, vjust = 1, hjust=1)) +
+  	theme(plot.title = element_text(hjust=0.5, face="bold")) +
+  scale_y_continuous(labels = percent_format(accuracy = 0.01), limits = c(0,0.05))+
+  #scale_y_log10(limits = c(0,0.05))+
+  #scale_y_log10()+
+  	ggtitle(title)+
+      labs(x = "Type", y = "% contaminating mouse/human gDNA reads cell")+
+    scale_fill_manual(values = group_colors_Type3)+
+    guides(fill = "none")
+
+p 
+
+ggsave(filename = title, path = plot_save_dir, plot = p, device = "pdf", scale = 1,
+       width = 10, height = 15, units = "cm", dpi = 300)
+
+
+
+
+
+# Define colors (keep WTC11 & NIH3T3, change Mix to striped pattern)
+group_colors_Type3 <- c("WTC11" = "#2C3930", "NIH3T3" = "#A27B5C", "Mix" = NA, "Doublet" = "gray40")
+
+# Compute summary statistics (mean and SE)
+summary_stats <- metadata %>%
+  group_by(Type2) %>%
+  summarise(
+    mean = mean(gDNA_cont, na.rm = TRUE),
+    se = sd(gDNA_cont, na.rm = TRUE) / sqrt(n())
+  )
+
+
+title = "gDNA_cont_H_M_bar.pdf"
+
+# Create bar plot with error bars
+p <- ggplot(summary_stats, aes(x = Type2, y = mean, fill = Type2)) +
+  geom_bar_pattern(
+    stat = "identity", position = "dodge", width = 0.6,
+    pattern = ifelse(summary_stats$Type2 == "Mix", "stripe", "none"),  # Apply stripe pattern to Mix
+    pattern_fill = "#A27B5C",  # NIH3T3 color
+    pattern_color = "#2C3930",  # WTC11 color
+    pattern_angle = 45,  # Diagonal stripes
+    pattern_density = 1,
+    pattern_spacing = 0.05, 
+    #pattern_size = 1,
+    pattern_key_scale_factor = 10
+  ) +
+  geom_errorbar(aes(ymin = mean - se, ymax = mean + se), width = 0.2) +
+  theme_classic() +
+  theme(axis.text.x = element_text(angle = 45, vjust = 1, hjust = 1)) +
+  theme(plot.title = element_text(hjust = 0.5, face = "bold")) +
+  scale_y_continuous(labels = percent_format(accuracy = 0.01), limits = c(0,0.002)) +
+  ggtitle(title) +
+  labs(x = "Type", y = "% Contaminating Mouse/Human gDNA Reads per Cell") +
+  scale_fill_manual(values = group_colors_Type3, na.value = NA) +  # Use NA to avoid overriding pattern
+  guides(fill = "none")
+
+p
+
+ggsave(filename = title, path = plot_save_dir, plot = p, device = "pdf", scale = 1,
+       width = 10, height = 15, units = "cm", dpi = 300)
+
+
+
+gDNA_cont_avg <- metadata %>% filter(!is.na(gDNA_cont)) %>%group_by(Type2) %>% summarise(gDNA_cont_avg = mean(gDNA_cont))
+
+
+
+to_file <- metadata %>% dplyr::select(cell, Type = Type2, gDNA_cont)
+file_name = "Fig1_S2_i_gDNA_cont.csv"
+write.csv(to_file, paste0(file_save_dir, "/", file_name), row.names = FALSE) 
+
+```
+
+
+RNA - reads
+```{r}
+
+to_order_Type3 <- c("WTC11", "NIH3T3", "Mix")
+metadata$Type2 <- factor(metadata$Type2, levels = to_order_Type3)
+
+metadata <- metadata %>% mutate(RNA_reads_cont = case_when(Type3 == "WTC11" ~ nReads_RNA_M/nReads_RNA,
+                                                      Type3 == "NIH3T3" ~ nReads_RNA_H/nReads_RNA))
+
+
+
+title = "RNA_reads_cont_H_M.pdf"
+
+#Plot sample barcode ratio
+p <- metadata %>%
+ ggplot(aes(x=Type2, y=RNA_reads_cont, fill = Type2))+
+  #geom_violin(alpha = 0.2, adjust = 1)+
+  geom_boxplot(width = 0.75)+
+  	theme_classic() +
+  	theme(axis.text.x = element_text(angle = 45, vjust = 1, hjust=1)) +
+  	theme(plot.title = element_text(hjust=0.5, face="bold")) +
+  scale_y_continuous(labels = percent_format(accuracy = 0.01), limits = c(0,0.05))+
+  #scale_y_log10(limits = c(0,0.05))+
+  #scale_y_log10()+
+  	ggtitle(title)+
+      labs(x = "Type", y = "% contaminating mouse/human gDNA reads cell")+
+    scale_fill_manual(values = group_colors_Type3)+
+    guides(fill = "none")
+
+p 
+
+ggsave(filename = title, path = plot_save_dir, plot = p, device = "pdf", scale = 1,
+       width = 10, height = 15, units = "cm", dpi = 300)
+
+
+
+
+# Define colors (keep WTC11 & NIH3T3, change Mix to striped pattern)
+group_colors_Type3 <- c("WTC11" = "#2C3930", "NIH3T3" = "#A27B5C", "Mix" = NA, "Doublet" = "gray40")
+
+# Compute summary statistics (mean and SE)
+summary_stats <- metadata %>%
+  group_by(Type2) %>%
+  summarise(
+    mean = mean(RNA_reads_cont, na.rm = TRUE),
+    se = sd(RNA_reads_cont, na.rm = TRUE) / sqrt(n())
+  )
+
+
+title = "RNA_reads_cont_H_M_bar.pdf"
+
+# Create bar plot with error bars
+p <- ggplot(summary_stats, aes(x = Type2, y = mean, fill = Type2)) +
+  geom_bar_pattern(
+    stat = "identity", position = "dodge", width = 0.6,
+    pattern = ifelse(summary_stats$Type2 == "Mix", "stripe", "none"),  # Apply stripe pattern to Mix
+    pattern_fill = "#A27B5C",  # NIH3T3 color
+    pattern_color = "#2C3930",  # WTC11 color
+    pattern_angle = 45,  # Diagonal stripes
+    pattern_density = 1,
+    pattern_spacing = 0.05, 
+    #pattern_size = 1,
+    pattern_key_scale_factor = 10
+  ) +
+  geom_errorbar(aes(ymin = mean - se, ymax = mean + se), width = 0.2) +
+  theme_classic() +
+  theme(axis.text.x = element_text(angle = 45, vjust = 1, hjust = 1)) +
+  theme(plot.title = element_text(hjust = 0.5, face = "bold")) +
+  scale_y_continuous(labels = percent_format(accuracy = 0.01), limits = c(0,0.015)) +
+  ggtitle(title) +
+  labs(x = "Type", y = "% Contaminating Mouse/Human RNA Reads per Cell") +
+  scale_fill_manual(values = group_colors_Type3, na.value = NA) +  # Use NA to avoid overriding pattern
+  guides(fill = "none")
+
+p
+
+ggsave(filename = title, path = plot_save_dir, plot = p, device = "pdf", scale = 1,
+       width = 10, height = 15, units = "cm", dpi = 300)
+
+
+
+RNA_reads_cont_avg <- metadata %>% filter(!is.na(RNA_reads_cont)) %>%group_by(Type2) %>% summarise(RNA_reads_cont_avg = mean(RNA_reads_cont))
+
+
+
+
+```
+
+
+
+RNA - umis
+```{r}
+
+to_order_Type3 <- c("WTC11", "NIH3T3", "Mix")
+metadata$Type2 <- factor(metadata$Type2, levels = to_order_Type3)
+
+metadata <- metadata %>% mutate(RNA_umis_cont = case_when(Type3 == "WTC11" ~ nCount_RNA_M/nCount_RNA,
+                                                      Type3 == "NIH3T3" ~ nCount_RNA_H/nCount_RNA))
+
+
+
+title = "RNA_umis_cont_H_M.pdf"
+
+#Plot sample barcode ratio
+p <- metadata %>%
+ ggplot(aes(x=Type2, y=RNA_umis_cont, fill = Type2))+
+  #geom_violin(alpha = 0.2, adjust = 1)+
+  geom_boxplot(width = 0.75)+
+  	theme_classic() +
+  	theme(axis.text.x = element_text(angle = 45, vjust = 1, hjust=1)) +
+  	theme(plot.title = element_text(hjust=0.5, face="bold")) +
+  scale_y_continuous(labels = percent_format(accuracy = 0.01), limits = c(0,0.1))+
+  #scale_y_log10(limits = c(0,0.05))+
+  #scale_y_log10()+
+  	ggtitle(title)+
+      labs(x = "Type", y = "% contaminating mouse/human gDNA reads cell")+
+    scale_fill_manual(values = group_colors_Type3)+
+    guides(fill = "none")
+
+p 
+
+ggsave(filename = title, path = plot_save_dir, plot = p, device = "pdf", scale = 1,
+       width = 10, height = 15, units = "cm", dpi = 300)
+
+
+
+# Define colors (keep WTC11 & NIH3T3, change Mix to striped pattern)
+group_colors_Type3 <- c("WTC11" = "#2C3930", "NIH3T3" = "#A27B5C", "Mix" = NA, "Doublet" = "gray40")
+
+# Compute summary statistics (mean and SE)
+summary_stats <- metadata %>%
+  group_by(Type2) %>%
+  summarise(
+    mean = mean(RNA_umis_cont, na.rm = TRUE),
+    se = sd(RNA_umis_cont, na.rm = TRUE) / sqrt(n())
+  )
+
+
+title = "RNA_umis_cont_H_M_bar.pdf"
+
+# Create bar plot with error bars
+p <- ggplot(summary_stats, aes(x = Type2, y = mean, fill = Type2)) +
+  geom_bar_pattern(
+    stat = "identity", position = "dodge", width = 0.6,
+    pattern = ifelse(summary_stats$Type2 == "Mix", "stripe", "none"),  # Apply stripe pattern to Mix
+    pattern_fill = "#A27B5C",  # NIH3T3 color
+    pattern_color = "#2C3930",  # WTC11 color
+    pattern_angle = 45,  # Diagonal stripes
+    pattern_density = 1,
+    pattern_spacing = 0.05, 
+    #pattern_size = 1,
+    pattern_key_scale_factor = 10
+  ) +
+  geom_errorbar(aes(ymin = mean - se, ymax = mean + se), width = 0.2) +
+  theme_classic() +
+  theme(axis.text.x = element_text(angle = 45, vjust = 1, hjust = 1)) +
+  theme(plot.title = element_text(hjust = 0.5, face = "bold")) +
+  scale_y_continuous(labels = percent_format(accuracy = 0.01), limits = c(0,0.02)) +
+  ggtitle(title) +
+  labs(x = "Type", y = "% Contaminating Mouse/Human RNA Reads per Cell") +
+  scale_fill_manual(values = group_colors_Type3, na.value = NA) +  # Use NA to avoid overriding pattern
+  guides(fill = "none")
+
+p
+
+ggsave(filename = title, path = plot_save_dir, plot = p, device = "pdf", scale = 1,
+       width = 10, height = 15, units = "cm", dpi = 300)
+
+
+
+RNA_umis_cont_avg <- metadata %>% filter(!is.na(RNA_umis_cont)) %>%group_by(Type2) %>% summarise(RNA_umis_cont_avg = mean(RNA_umis_cont))
+
+
+to_file <- metadata %>% dplyr::select(cell, Type = Type2, RNA_umis_cont)
+file_name = "Fig1_S2_j_RNA_umis_cont.csv"
+write.csv(to_file, paste0(file_save_dir, "/", file_name), row.names = FALSE) 
+
+```
+
+
+
+
+#Check if its only specific genes that contaminate the human ones? 
+
+
+```{r}
+
+
+cells_WTC11 <- metadata %>% filter(Type2 == "WTC11") %>% pull(cell_index)
+
+cDNA_mat_reads_WTC11 <- cDNA_mat_reads[,cells_WTC11]
+
+cDNA_mat_reads_WTC11_df <- as.data.frame(cDNA_mat_reads[,cells_WTC11])
+
+
+M_rows <- grep("_Mouse", rownames(cDNA_mat_reads_WTC11), value = TRUE)
+cDNA_reads_WTC11_M <- cDNA_mat_reads_WTC11[M_rows,]
+
+WTC11_cont_M_sum <- rowSums(cDNA_reads_WTC11_M) %>% as.data.frame()
+
+
+
+
+
+cells_NIH3T3 <- metadata %>% filter(Type2 == "NIH3T3") %>% pull(cell_index)
+
+cDNA_mat_reads_NIH3T3 <- cDNA_mat_reads[,cells_NIH3T3]
+
+cDNA_mat_reads_NIH3T3_df <- as.data.frame(cDNA_mat_reads[,cells_NIH3T3])
+
+
+H_rows <- grep("_Human", rownames(cDNA_mat_reads_NIH3T3), value = TRUE)
+cDNA_reads_NIH3T3_M <- cDNA_mat_reads_NIH3T3[H_rows,]
+
+NIH3T3_cont_H_sum <- rowSums(cDNA_reads_NIH3T3_M) %>% as.data.frame()
+
+
+```
+
+
+
+#__________________
+#Simulate before sample barcode filtering - also take non max sbc reads/cell into account in matrix
+
+Collapse based only on cell barcode in RNA read/umi matrixes
+
+```{r}
+
+
+#Load data pre-cutoff 
+
+cDNA_data_Seurat <- readRDS(paste0(plot_save_dir,"/SDR009_Seurat_max_sbc_1000reads_cut.rds"))
+
+metadata <- cDNA_data_Seurat@meta.data
+sbc_annot <- read.csv("REF_lists/SDR009_sbcs.csv")
+to_order <- sbc_annot$Sample
+metadata$Type <- factor(metadata$Type, levels = to_order)
+
+
+#Apply same cutoffs as above but without the cDNA_ratio_cut
+cDNA_data_Seurat <- subset(x = cDNA_data_Seurat, subset = (nFeature_RNA_H >= 20) | (nFeature_RNA_M >= 20))
+cDNA_data_Seurat <- subset(x = cDNA_data_Seurat, subset = (nFeature_gDNA_H >= 20) | (nFeature_gDNA_M >= 20))
+
+
+
+cDNA_data_Seurat <- subset(x = cDNA_data_Seurat, subset = 
+   ((nReads_gDNA_H >= 500) & (nReads_gDNA_H <= 2500)) | 
+   ((nReads_gDNA_M >= 500) & (nReads_gDNA_M <= 2500))
+)
+
+cDNA_data_Seurat <- subset(x = cDNA_data_Seurat, subset = nReads_gDNA <= 2500)
+cDNA_data_Seurat <- subset(x = cDNA_data_Seurat, subset = (nReads_RNA_H >= 500) | (nReads_RNA_M >= 500))
+cDNA_data_Seurat <- subset(x = cDNA_data_Seurat, subset = 
+   ((nCount_RNA_H >= 200) & (nCount_RNA_H <= 2000)) | 
+   ((nCount_RNA_M >= 150) & (nCount_RNA_M <= 1700))
+)
+
+cDNA_data_Seurat <- subset(x = cDNA_data_Seurat, subset = nCount_RNA <= 2000)
+
+
+metadata <- cDNA_data_Seurat@meta.data
+
+
+#Use same annotation as above 
+
+metadata <- metadata %>% mutate(gDNA_cont_M = nReads_gDNA_M/nReads_gDNA,
+                                gDNA_cont_H = nReads_gDNA_H/nReads_gDNA,
+                                RNA_reads_cont_M = nReads_RNA_M/nReads_RNA,
+                                RNA_reads_cont_H = nReads_RNA_H/nReads_RNA,
+                                RNA_umis_cont_M = nCount_RNA_M/nCount_RNA,
+                                RNA_umis_cont_H = nCount_RNA_H/nCount_RNA)
+                            
+                                                     
+
+metadata <- metadata %>% mutate(Type3 = case_when((gDNA_cont_M > 0.9 & gDNA_cont_H < 0.1) &
+                                                  (RNA_reads_cont_M > 0.9 & RNA_reads_cont_H < 0.1) &
+                                                  (RNA_umis_cont_M > 0.9 & RNA_umis_cont_H < 0.1) ~ "NIH3T3",
+                                                  (gDNA_cont_H > 0.9 & gDNA_cont_M < 0.1) &
+                                                  (RNA_reads_cont_H > 0.9 & RNA_reads_cont_M < 0.1) &
+                                                  (RNA_umis_cont_H > 0.9 & RNA_umis_cont_M < 0.1) ~ "WTC11",
+                                                  TRUE ~ "Doublet"))
+
+
+
+
+
+metadata <- metadata %>% mutate(Type4 = case_when((gDNA_cont_M > 0.5 & gDNA_cont_H < 0.5) &
+                                                  (RNA_reads_cont_M > 0.5 & RNA_reads_cont_H < 0.5) &
+                                                  (RNA_umis_cont_M > 0.5 & RNA_umis_cont_H < 0.5) ~ "NIH3T3",
+                                                  (gDNA_cont_H > 0.5 & gDNA_cont_M < 0.5) &
+                                                  (RNA_reads_cont_H > 0.5 & RNA_reads_cont_M < 0.5) &
+                                                  (RNA_umis_cont_H > 0.5 & RNA_umis_cont_M < 0.5) ~ "WTC11",
+                                                  TRUE ~ "Doublet"))
+check_Type3 <- table(metadata$Type3)
+check_Type3
+check_Type4 <- table(metadata$Type4)
+
+
+
+#Annotate doublets
+
+#metadata  <- metadata  %>% mutate(Type3 = if_else(cDNA_ratio_sbc >= 0.85, Type3, "Doublet"))
+#metadata  <- metadata  %>% mutate(Type4 = if_else(cDNA_ratio_sbc >= 0.85, Type4, "Doublet"))
+
+#For order
+to_order_Type3 <- c("WTC11", "NIH3T3", "Mix")
+metadata$Type2 <- factor(metadata$Type2, levels = to_order_Type3)
+
+
+
+#RNA reads
+
+#load read data sets 
+cDNA_data_features_reads <- read.delim(paste0(path_dir_cDNA_reads,"/features.tsv.gz"), header = FALSE) %>% dplyr::pull(1)
+cDNA_data_features_reads <- sub("_chrom", "\\1", cDNA_data_features_reads)
+cDNA_data_barcodes_reads <- read.delim(paste0(path_dir_cDNA_reads, "/barcodes.tsv.gz"), header = FALSE) %>% dplyr::pull(1)
+cDNA_mat_reads <- readMM(paste0(path_dir_cDNA_reads, "/matrix.mtx.gz"))
+dimnames(cDNA_mat_reads) <- list(cDNA_data_features_reads, cDNA_data_barcodes_reads)
+
+cDNA_data_barcodes_reads_mod <- sub(":.*", "", cDNA_data_barcodes_reads)
+  
+
+# Identify unique barcodes and their indices
+unique_barcodes <- unique(cDNA_data_barcodes_reads_mod)
+barcode_indices <- match(cDNA_data_barcodes_reads_mod, unique_barcodes)
+
+
+# Assuming `barcode_indices` maps each column to a unique barcode group
+n <- length(cDNA_data_barcodes_reads_mod)  # Number of original columns
+m <- length(unique_barcodes)  # Number of unique barcodes (aggregated columns)
+
+# Create the mapping matrix
+# Rows correspond to original columns, columns to aggregated groups
+mapping_matrix <- sparseMatrix(i = 1:n, j = barcode_indices, x = rep(1, n), dims = c(n, m))
+
+# Assuming `cDNA_mat_reads_sub` is your original sparse matrix
+cDNA_mat_reads_agg <- cDNA_mat_reads %*% mapping_matrix
+
+# Assign dimnames to the new matrix
+dimnames(cDNA_mat_reads_agg) <- list(cDNA_data_features_reads, unique_barcodes)
+
+
+#Subset for cells in experiment
+
+cells <- metadata$cell
+
+cDNA_mat_reads_agg <- cDNA_mat_reads_agg[,cells]
+
+
+
+#Subset for human and mouse rows and calculate number of umis
+H_rows <- grep("_Human", rownames(cDNA_mat_reads_agg), value = TRUE)
+cDNA_mat_reads_agg_H <- cDNA_mat_reads_agg[H_rows,]
+cDNA_mat_reads_agg_sum_H <- colSums(cDNA_mat_reads_agg_H)
+cDNA_mat_reads_agg_feat_H <- colSums(cDNA_mat_reads_agg_H != 0)
+
+
+M_rows <- grep("_Mouse", rownames(cDNA_mat_reads_agg), value = TRUE)
+cDNA_mat_reads_agg_M <- cDNA_mat_reads_agg[M_rows,]
+cDNA_mat_reads_agg_sum_M <- colSums(cDNA_mat_reads_agg_M)
+cDNA_mat_reads_agg_feat_M <- colSums(cDNA_mat_reads_agg_M != 0)
+
+
+
+cDNA_mat_reads_agg_meta_H_M <- data.frame(nReads_RNA_wosbc_H = cDNA_mat_reads_agg_sum_H,
+                                  nFeature_RNA_wosbc_RNA_H = cDNA_mat_reads_agg_feat_H,
+                                  nReads_RNA_wosbc_M = cDNA_mat_reads_agg_sum_M,
+                                  nFeature_RNA_wosbc_RNA_M = cDNA_mat_reads_agg_feat_M,
+                                        cell = colnames(cDNA_mat_reads_agg),
+                                  row.names = colnames(cDNA_mat_reads_agg)) %>%
+                                         replace(is.na(.), 0)
+
+
+metadata <- metadata %>% left_join(cDNA_mat_reads_agg_meta_H_M, by = c("cell" = "cell"))
+
+
+
+
+#RNA UMIs
+
+
+#Laod matrix - umis
+cDNA_data_features_umis <- read.delim(paste0(path_dir_cDNA_umis, "/features.tsv.gz"), header = FALSE) %>% dplyr::pull(1)
+cDNA_data_features_umis <- sub("_chrom", "\\1", cDNA_data_features_reads)
+cDNA_data_barcodes_umis <- read.delim(paste0(path_dir_cDNA_umis, "/barcodes.tsv.gz"), header = FALSE) %>% dplyr::pull(1)
+cDNA_mat <- readMM(paste0(path_dir_cDNA_umis, "/matrix.mtx.gz"))
+dimnames(cDNA_mat) <- list(cDNA_data_features_umis, cDNA_data_barcodes_umis)
+
+
+
+cDNA_data_barcodes_umis_mod <- sub(":.*", "", cDNA_data_barcodes_umis)
+  
+
+# Identify unique barcodes and their indices
+unique_barcodes <- unique(cDNA_data_barcodes_umis_mod)
+barcode_indices <- match(cDNA_data_barcodes_umis_mod, unique_barcodes)
+
+
+# Assuming `barcode_indices` maps each column to a unique barcode group
+n <- length(cDNA_data_barcodes_umis_mod)  # Number of original columns
+m <- length(unique_barcodes)  # Number of unique barcodes (aggregated columns)
+
+# Create the mapping matrix
+# Rows correspond to original columns, columns to aggregated groups
+mapping_matrix <- sparseMatrix(i = 1:n, j = barcode_indices, x = rep(1, n), dims = c(n, m))
+
+# Assuming `cDNA_mat_umis_sub` is your original sparse matrix
+cDNA_mat_umis_agg <- cDNA_mat %*% mapping_matrix
+
+# Assign dimnames to the new matrix
+dimnames(cDNA_mat_umis_agg) <- list(cDNA_data_features_umis, unique_barcodes)
+
+
+#Subset for cells in experiment
+
+cells <- metadata$cell
+
+cDNA_mat_umis_agg <- cDNA_mat_umis_agg[,cells]
+
+
+
+#Subset for human and mouse rows and calculate number of umis
+H_rows <- grep("_Human", rownames(cDNA_mat_umis_agg), value = TRUE)
+cDNA_mat_umis_agg_H <- cDNA_mat_umis_agg[H_rows,]
+cDNA_mat_umis_agg_sum_H <- colSums(cDNA_mat_umis_agg_H)
+cDNA_mat_umis_agg_feat_H <- colSums(cDNA_mat_umis_agg_H != 0)
+
+
+M_rows <- grep("_Mouse", rownames(cDNA_mat_umis_agg), value = TRUE)
+cDNA_mat_umis_agg_M <- cDNA_mat_umis_agg[M_rows,]
+cDNA_mat_umis_agg_sum_M <- colSums(cDNA_mat_umis_agg_M)
+cDNA_mat_umis_agg_feat_M <- colSums(cDNA_mat_umis_agg_M != 0)
+
+
+
+cDNA_mat_umis_agg_meta_H_M <- data.frame(nCounts_RNA_wosbc_H = cDNA_mat_umis_agg_sum_H,
+                                  nFeature_RNA_wosbc_RNA_H = cDNA_mat_umis_agg_feat_H,
+                                  nCounts_RNA_wosbc_M = cDNA_mat_umis_agg_sum_M,
+                                  nFeature_RNA_wosbc_RNA_M = cDNA_mat_umis_agg_feat_M,
+                                        cell = colnames(cDNA_mat_umis_agg),
+                                  row.names = colnames(cDNA_mat_umis_agg)) %>%
+                                         replace(is.na(.), 0)
+
+
+metadata <- metadata %>% left_join(cDNA_mat_umis_agg_meta_H_M, by = c("cell" = "cell"))
+
+
+cDNA_data_Seurat@meta.data <- metadata
+
+saveRDS(cDNA_data_Seurat, paste0(plot_save_dir,"/SDR009_Seurat_filtered_no_max_sbc_reads_included.rds"))
+
+
+cDNA_data_Seurat <- readRDS(paste0(plot_save_dir,"/SDR009_Seurat_filtered_no_max_sbc_reads_included.rds"))
+
+metadata <- cDNA_data_Seurat@meta.data
+
+#Annotate doublets
+metadata  <- metadata  %>% mutate(Type3 = if_else(cDNA_ratio_sbc >= 0.85, Type3, "Doublet"))
+metadata  <- metadata  %>% mutate(Type4 = if_else(cDNA_ratio_sbc >= 0.85, Type4, "Doublet"))
+
+  
+  
+
+metadata %>% count(Type3)
+metadata %>% filter(cDNA_ratio_sbc >= 0.85) %>% count(Type3)
+
+
+metadata %>% count(Type4)
+metadata %>% filter(cDNA_ratio_sbc > 0.85) %>% count(Type4)
+
+
+
+
+```
+
+
+
+
+
+gDNA - reads  - wo sbc cut filterin removal
+
+
+```{r}
+title = "gDNA_nReads_H_vs_nReads_M_only_max_sbc_no_sbc_filter_v2.pdf"
+p <- metadata  %>% 
+  	ggplot(aes(x=nReads_gDNA_H, y=nReads_gDNA_M, color = Type3)) + 
+  	geom_point(size =1) + 
+	#scale_colour_gradient(low = "gray90", high = "#990000", limits = c(0,1)) +
+  #xlim(c(0,30))+
+    #ylim(c(0,30))+
+  	#scale_x_log10(limits = c(1,10000)) + 
+  	#scale_y_log10(limits = c(1,10000)) + 
+    scale_y_continuous(limits = c(0,2600))+
+    scale_x_continuous(limits = c(0,2600))+
+  	theme_classic() +
+  	#geom_vline(xintercept = 10) +
+  	#geom_hline(yintercept = 10) +
+    	theme(plot.title = element_text(hjust=0.5, face="bold")) +
+      labs(x = "nReads/cell (WTC11)", y =  "nReads/cell (NIH3T3)")+
+    	facet_wrap(~Type2)+
+        scale_color_manual(values = group_colors_Type3)+
+  guides(color = "none")+
+  	ggtitle(title)
+
+
+p
+
+ggsave(filename = title, path = plot_save_dir, plot = p, device = "pdf", scale = 1,
+       width = 45, height = 15, units = "cm", dpi = 300)
+
+to_file <- metadata %>% dplyr::select(cell, 
+                                      nReads_gDNA_Human = nReads_gDNA_H,
+                                      nReads_gDNA_Mouse = nReads_gDNA_M,
+                                      Type = Type2,
+                                      Cell_annot = Type3)
+file_name = "Fig1_S2_k_gDNA_H_vs_M_wo_sbc_rem.csv"
+write.csv(to_file, paste0(file_save_dir, "/", file_name), row.names = FALSE) 
+
+
+```
+
+
+
+
+
+RNA - reads  - wo sbc cut filterin removal
+
+```{r}
+
+title = "RNA_nReads_H_vs_nReads_M_only_max_sbc_no_sbc_filter_v2.pdf"
+p <- metadata  %>% 
+  	ggplot(aes(x=nReads_RNA_wosbc_H, y=nReads_RNA_wosbc_M, color = Type3)) + 
+  	geom_point(size = 1) + 
+	#scale_colour_gradient(low = "gray90", high = "#990000", limits = c(0,1)) +
+  #xlim(c(0,30))+
+    #ylim(c(0,30))+
+  	#scale_x_log10(limits = c(1,10000)) + 
+  	#scale_y_log10(limits = c(1,10000)) + 
+    scale_y_continuous(limits = c(0,15000))+
+    scale_x_continuous(limits = c(0,15000))+
+  	theme_classic() +
+  	#geom_vline(xintercept = 10) +
+  	#geom_hline(yintercept = 10) +
+    	theme(plot.title = element_text(hjust=0.5, face="bold")) +
+      labs(x = "nReads/cell (WTC11)", y =  "nReads/cell (NIH3T3)")+
+    	facet_wrap(~Type2)+
+        scale_color_manual(values = group_colors_Type3)+
+  guides(color = "none")+
+  	ggtitle(title)
+
+
+p
+
+ggsave(filename = title, path = plot_save_dir, plot = p, device = "pdf", scale = 1,
+       width = 45, height = 15, units = "cm", dpi = 300)
+```
+
+
+
+
+
+
+RNA - umis  - wo sbc cut filterin removal
+
+```{r}
+
+title = "RNA_nCount_H_vs_nCount_M_only_max_sbc_no_sbc_filter_v2.pdf"
+p <- metadata  %>% 
+  	ggplot(aes(x=nCounts_RNA_wosbc_H, y=nCounts_RNA_wosbc_M, color = Type3)) + 
+  	geom_point(size = 1) + 
+	#scale_colour_gradient(low = "gray90", high = "#990000", limits = c(0,1)) +
+  #xlim(c(0,30))+
+    #ylim(c(0,30))+
+  	#scale_x_log10(limits = c(1,10000)) + 
+  	#scale_y_log10(limits = c(1,10000)) + 
+    scale_y_continuous(limits = c(0,2600))+
+    scale_x_continuous(limits = c(0,2600))+
+  	theme_classic() +
+  	#geom_vline(xintercept = 10) +
+  	#geom_hline(yintercept = 10) +
+    	theme(plot.title = element_text(hjust=0.5, face="bold")) +
+      labs(x = "nUMIs/cell (WTC11)", y =  "nUMIs/cell (NIH3T3)")+
+    	facet_wrap(~Type2)+
+        scale_color_manual(values = group_colors_Type3)+
+  guides(color = "none")+
+  	ggtitle(title)
+
+
+p
+
+ggsave(filename = title, path = plot_save_dir, plot = p, device = "pdf", scale = 1,
+       width = 45, height = 15, units = "cm", dpi = 300)
+
+
+to_file <- metadata %>% dplyr::select(cell, 
+                                      nCounts_RNA_wosbc_Human = nCounts_RNA_wosbc_H,
+                                      nCounts_RNA_wosbc_Mouse = nCounts_RNA_wosbc_M,
+                                      Type = Type2,
+                                      Cell_annot = Type3)
+file_name = "Fig1_S2_m_RNA_H_vs_M_wo_sbc_rem.csv"
+write.csv(to_file, paste0(file_save_dir, "/", file_name), row.names = FALSE) 
+
+
+```
+
+
+
+
+#Check cell annotation 
+
+```{r}
+
+to_order_Type3 <- c("WTC11", "NIH3T3", "Doublet")
+metadata$Type3 <- factor(metadata$Type3, levels = to_order_Type3)
+metadata$Type4 <- factor(metadata$Type4, levels = to_order_Type3)
+
+
+title = "NCells_per_Type_filtered_annotated_wo_sbc_removal.pdf"
+p <- metadata %>%
+  	ggplot(aes(x=Type2, fill=Type3)) + 
+  	geom_bar(position = "stack") +
+  	theme_classic() +
+  	theme(axis.text.x = element_text(angle = 45, vjust = 1, hjust=1)) +
+    scale_y_continuous(limits = c(0,10000))+
+  	theme(plot.title = element_text(hjust=0.5, face="bold")) +
+  	ggtitle(title)+
+    labs(x = "Type", y = "Number of cells")+
+    scale_fill_manual(values = group_colors_Type3)+
+  #facet_wrap(~Type2)+
+    guides(fill = "none")
+
+p
+
+ggsave(filename = title, path = plot_save_dir, plot = p, device = "pdf", scale = 1,
+       width = 10, height = 15, units = "cm", dpi = 300)
+
+
+title = "NCells_per_Type_filtered_annotated_wo_sbc_removal_with_legend.pdf"
+p <- metadata %>%
+  	ggplot(aes(x=Type2, fill=Type3)) + 
+  	geom_bar(position = "stack") +
+  	theme_classic() +
+  	theme(axis.text.x = element_text(angle = 45, vjust = 1, hjust=1)) +
+    scale_y_continuous(limits = c(0,10000))+
+  	theme(plot.title = element_text(hjust=0.5, face="bold")) +
+  	ggtitle(title)+
+    labs(x = "Type", y = "Number of cells")+
+    scale_fill_manual(values = group_colors_Type3)
+  #facet_wrap(~Type2)+
+   # guides(fill = "none")
+
+p
+
+ggsave(filename = title, path = plot_save_dir, plot = p, device = "pdf", scale = 1,
+       width = 10, height = 15, units = "cm", dpi = 300)
+
+
+
+
+
+perc_doublets <- metadata %>%
+  group_by(Type2, Type3) %>%
+  summarize(count = n(), .groups = "drop") %>%
+  mutate(fraction = count / sum(count)*100)
+
+
+
+
+to_file <- metadata %>% dplyr::select(cell, 
+                                      Type = Type2,
+                                      Cell_annot = Type3
+                                      )
+file_name = "Fig1_S2_g_Bargrahp_wo_sbc_rem.csv"
+write.csv(to_file, paste0(file_save_dir, "/", file_name), row.names = FALSE) 
+
+
+
+```
+
+
+
+
+
+
+#Calculate fraction of contaminating reads
+gDNA
+```{r}
+
+
+group_colors_Type3 <- c("WTC11" = "#2C3930", "NIH3T3" = "#A27B5C", "Mix" = "#EADFB4", "Doublet" = "gray40")
+
+
+library(ggpattern)
+to_order_Type3 <- c("WTC11", "NIH3T3", "Mix")
+metadata$Type2 <- factor(metadata$Type2, levels = to_order_Type3)
+
+metadata <- metadata %>% mutate(gDNA_cont = case_when(Type4 == "WTC11" ~ nReads_gDNA_M/nReads_gDNA,
+                                                      Type4 == "NIH3T3" ~ nReads_gDNA_H/nReads_gDNA))
+                                                      
+
+title = "gDNA_cont_H_M_wo_sbc_removal.pdf"
+
+#Plot sample barcode ratio
+p <- metadata %>%
+ ggplot(aes(x=Type2, y=gDNA_cont, fill = Type2))+
+  geom_violin(alpha = 0.2, adjust = 1)+
+  geom_boxplot(width = 0.25)+
+  	theme_classic() +
+  	theme(axis.text.x = element_text(angle = 45, vjust = 1, hjust=1)) +
+  	theme(plot.title = element_text(hjust=0.5, face="bold")) +
+  scale_y_continuous(limits = c(0,0.01))+
+  	ggtitle(title)+
+      labs(x = "Type", y = "% contaminating mouse/human gDNA reads cell")+
+    scale_fill_manual(values = group_colors_Type3)+
+    guides(fill = "none")
+
+p 
+
+ggsave(filename = title, path = plot_save_dir, plot = p, device = "pdf", scale = 1,
+       width = 20, height = 15, units = "cm", dpi = 300)
+
+
+
+
+
+# Define colors (keep WTC11 & NIH3T3, change Mix to striped pattern)
+group_colors_Type3 <- c("WTC11" = "#2C3930", "NIH3T3" = "#A27B5C", "Mix" = NA, "Doublet" = "gray40")
+
+# Compute summary statistics (mean and SE)
+summary_stats <- metadata %>%
+  group_by(Type2) %>%
+  summarise(
+    mean = mean(gDNA_cont, na.rm = TRUE),
+    se = sd(gDNA_cont, na.rm = TRUE) / sqrt(n())
+  )
+
+
+title = "gDNA_cont_H_M_bar_wo_sbc_removal.pdf"
+
+# Create bar plot with error bars
+p <- ggplot(summary_stats, aes(x = Type2, y = mean, fill = Type2)) +
+  geom_bar_pattern(
+    stat = "identity", position = "dodge", width = 0.6,
+    pattern = ifelse(summary_stats$Type2 == "Mix", "stripe", "none"),  # Apply stripe pattern to Mix
+    pattern_fill = "#A27B5C",  # NIH3T3 color
+    pattern_color = "#2C3930",  # WTC11 color
+    pattern_angle = 45,  # Diagonal stripes
+    pattern_density = 1,
+    pattern_spacing = 0.05, 
+    #pattern_size = 1,
+    pattern_key_scale_factor = 10
+  ) +
+  geom_errorbar(aes(ymin = mean - se, ymax = mean + se), width = 0.2) +
+  theme_classic() +
+  theme(axis.text.x = element_text(angle = 45, vjust = 1, hjust = 1)) +
+  theme(plot.title = element_text(hjust = 0.5, face = "bold")) +
+  scale_y_continuous(labels = percent_format(accuracy = 0.01)) +
+  ggtitle(title) +
+  labs(x = "Type", y = "% Contaminating Mouse/Human gDNA Reads per Cell") +
+  scale_fill_manual(values = group_colors_Type3, na.value = NA) +  # Use NA to avoid overriding pattern
+  guides(fill = "none")
+
+p
+
+ggsave(filename = title, path = plot_save_dir, plot = p, device = "pdf", scale = 1,
+       width = 10, height = 15, units = "cm", dpi = 300)
+
+
+
+gDNA_cont_avg <- metadata %>% filter(!is.na(gDNA_cont)) %>%group_by(Type2) %>% summarise(gDNA_cont_avg = mean(gDNA_cont))
+
+```
+
+
+
+RNA - reads
+```{r}
+
+to_order_Type3 <- c("WTC11", "NIH3T3", "Mix")
+metadata$Type2 <- factor(metadata$Type2, levels = to_order_Type3)
+
+metadata <- metadata %>% mutate(RNA_reads_cont = case_when(Type3 == "WTC11" ~ nReads_RNA_M/nReads_RNA,
+                                                      Type3 == "NIH3T3" ~ nReads_RNA_H/nReads_RNA))
+
+
+
+title = "RNA_reads_cont_H_M_wo_sbc_removal.pdf"
+
+#Plot sample barcode ratio
+p <- metadata %>%
+ ggplot(aes(x=Type2, y=RNA_reads_cont, fill = Type2))+
+  #geom_violin(alpha = 0.2)+
+  geom_boxplot(width = 0.25)+
+  	theme_classic() +
+  	theme(axis.text.x = element_text(angle = 45, vjust = 1, hjust=1)) +
+  	theme(plot.title = element_text(hjust=0.5, face="bold")) +
+    scale_y_continuous(limits = c(0,0.05))+
+  	ggtitle(title)+
+      labs(x = "Type", y = "% contaminating mouse/human gDNA reads cell")+
+    scale_fill_manual(values = group_colors_Type3)+
+    guides(fill = "none")
+
+p 
+
+ggsave(filename = title, path = plot_save_dir, plot = p, device = "pdf", scale = 1,
+       width = 20, height = 15, units = "cm", dpi = 300)
+
+
+
+
+# Define colors (keep WTC11 & NIH3T3, change Mix to striped pattern)
+group_colors_Type3 <- c("WTC11" = "#2C3930", "NIH3T3" = "#A27B5C", "Mix" = NA, "Doublet" = "gray40")
+
+# Compute summary statistics (mean and SE)
+summary_stats <- metadata %>%
+  group_by(Type2) %>%
+  summarise(
+    mean = mean(RNA_reads_cont, na.rm = TRUE),
+    se = sd(RNA_reads_cont, na.rm = TRUE) / sqrt(n())
+  )
+
+
+title = "RNA_reads_cont_H_M_bar_wo_sbc_removal.pdf"
+
+# Create bar plot with error bars
+p <- ggplot(summary_stats, aes(x = Type2, y = mean, fill = Type2)) +
+  geom_bar_pattern(
+    stat = "identity", position = "dodge", width = 0.6,
+    pattern = ifelse(summary_stats$Type2 == "Mix", "stripe", "none"),  # Apply stripe pattern to Mix
+    pattern_fill = "#A27B5C",  # NIH3T3 color
+    pattern_color = "#2C3930",  # WTC11 color
+    pattern_angle = 45,  # Diagonal stripes
+    pattern_density = 1,
+    pattern_spacing = 0.05, 
+    #pattern_size = 1,
+    pattern_key_scale_factor = 10
+  ) +
+  geom_errorbar(aes(ymin = mean - se, ymax = mean + se), width = 0.2) +
+  theme_classic() +
+  theme(axis.text.x = element_text(angle = 45, vjust = 1, hjust = 1)) +
+  theme(plot.title = element_text(hjust = 0.5, face = "bold")) +
+  scale_y_continuous(labels = percent_format(accuracy = 0.01), limits = c(0,0.015)) +
+  ggtitle(title) +
+  labs(x = "Type", y = "% Contaminating Mouse/Human RNA Reads per Cell") +
+  scale_fill_manual(values = group_colors_Type3, na.value = NA) +  # Use NA to avoid overriding pattern
+  guides(fill = "none")
+
+p
+
+ggsave(filename = title, path = plot_save_dir, plot = p, device = "pdf", scale = 1,
+       width = 10, height = 15, units = "cm", dpi = 300)
+
+
+
+RNA_reads_cont_avg <- metadata %>% filter(!is.na(RNA_reads_cont)) %>%group_by(Type2) %>% summarise(RNA_reads_cont_avg = mean(RNA_reads_cont))
+
+
+
+
+```
+
+
+
+
+
+RNA - umis
+```{r}
+
+to_order_Type3 <- c("WTC11", "NIH3T3", "Mix")
+metadata$Type2 <- factor(metadata$Type2, levels = to_order_Type3)
+
+metadata <- metadata %>% mutate(RNA_umis_cont = case_when(Type4 == "WTC11" ~ nCount_RNA_M/nCount_RNA,
+                                                      Type4 == "NIH3T3" ~ nCount_RNA_H/nCount_RNA))
+
+
+
+title = "RNA_umis_cont_H_M_wo_sbc_removal.pdf"
+
+#Plot sample barcode ratio
+p <- metadata %>%
+ ggplot(aes(x=Type2, y=RNA_umis_cont, fill = Type2))+
+  geom_violin(alpha = 0.2)+
+  geom_boxplot(width = 0.25)+
+  	theme_classic() +
+  	theme(axis.text.x = element_text(angle = 45, vjust = 1, hjust=1)) +
+  	theme(plot.title = element_text(hjust=0.5, face="bold")) +
+    scale_y_continuous(limits = c(0,0.05))+
+  	ggtitle(title)+
+      labs(x = "Type", y = "% contaminating mouse/human gDNA reads cell")+
+    scale_fill_manual(values = group_colors_Type3)+
+    guides(fill = "none")
+
+p 
+
+ggsave(filename = title, path = plot_save_dir, plot = p, device = "pdf", scale = 1,
+       width = 20, height = 15, units = "cm", dpi = 300)
+
+
+
+# Define colors (keep WTC11 & NIH3T3, change Mix to striped pattern)
+group_colors_Type3 <- c("WTC11" = "#2C3930", "NIH3T3" = "#A27B5C", "Mix" = NA, "Doublet" = "gray40")
+
+# Compute summary statistics (mean and SE)
+summary_stats <- metadata %>%
+  group_by(Type2) %>%
+  summarise(
+    mean = mean(RNA_umis_cont, na.rm = TRUE),
+    se = sd(RNA_umis_cont, na.rm = TRUE) / sqrt(n())
+  )
+
+
+title = "RNA_umis_cont_H_M_bar_wo_sbc_removal.pdf"
+
+# Create bar plot with error bars
+p <- ggplot(summary_stats, aes(x = Type2, y = mean, fill = Type2)) +
+  geom_bar_pattern(
+    stat = "identity", position = "dodge", width = 0.6,
+    pattern = ifelse(summary_stats$Type2 == "Mix", "stripe", "none"),  # Apply stripe pattern to Mix
+    pattern_fill = "#A27B5C",  # NIH3T3 color
+    pattern_color = "#2C3930",  # WTC11 color
+    pattern_angle = 45,  # Diagonal stripes
+    pattern_density = 1,
+    pattern_spacing = 0.05, 
+    #pattern_size = 1,
+    pattern_key_scale_factor = 10
+  ) +
+  geom_errorbar(aes(ymin = mean - se, ymax = mean + se), width = 0.2) +
+  theme_classic() +
+  theme(axis.text.x = element_text(angle = 45, vjust = 1, hjust = 1)) +
+  theme(plot.title = element_text(hjust = 0.5, face = "bold")) +
+  scale_y_continuous(labels = percent_format(accuracy = 0.01), limits = c(0,0.03)) +
+  ggtitle(title) +
+  labs(x = "Type", y = "% Contaminating Mouse/Human RNA Reads per Cell") +
+  scale_fill_manual(values = group_colors_Type3, na.value = NA) +  # Use NA to avoid overriding pattern
+  guides(fill = "none")
+
+p
+
+ggsave(filename = title, path = plot_save_dir, plot = p, device = "pdf", scale = 1,
+       width = 10, height = 15, units = "cm", dpi = 300)
+
+
+
+
+
+
+
+
+RNA_umis_cont_avg <- metadata %>% filter(!is.na(RNA_umis_cont)) %>%group_by(Type2) %>% summarise(RNA_umis_cont_avg = mean(RNA_umis_cont))
+
+
+```
+
+
+
+
+
+
+
+###Normalize, Variable features, scale data, PCA, Find Neighbors, 
+
+```{r}
+
+#Normalize
+cDNA_data_Seurat <- NormalizeData(cDNA_data_Seurat, normalization.method = "LogNormalize", scale.factor = 10000)
+
+#Find Variable features
+cDNA_data_Seurat  <- FindVariableFeatures(cDNA_data_Seurat, selection.method = "vst", nfeatures = nrow(cDNA_data_Seurat@assays$RNA))
+
+#Scale data
+all.genes <- rownames(cDNA_data_Seurat)
+cDNA_data_Seurat <- ScaleData(cDNA_data_Seurat, features = all.genes)
+
+#Run PCA
+cDNA_data_Seurat <- RunPCA(cDNA_data_Seurat, features = all.genes)
+
+print(cDNA_data_Seurat[["pca"]], dims = 1:5, nfeatures = 5)
+VizDimLoadings(cDNA_data_Seurat, dims = 1:2, reduction = "pca")
+DimHeatmap(cDNA_data_Seurat, dims = 1:5, cells = 1000, balanced = TRUE)
+
+#Find Neighbors
+cDNA_data_Seurat <- FindNeighbors(cDNA_data_Seurat, dims = 1:10)
+
+#Find Clusters
+cDNA_data_Seurat  <- FindClusters(cDNA_data_Seurat, resolution = 0.05)
+
+#Run UMAP
+cDNA_data_Seurat <- RunUMAP(cDNA_data_Seurat, dims = 1:10)
+
+#Run tSNE
+cDNA_data_Seurat <- RunTSNE(cDNA_data_Seurat, dims = 1:10)
+
+saveRDS(cDNA_data_Seurat, paste0(plot_save_dir,"/SDR009_Seurat_filtered_clustered.rds"))
+
+cDNA_data_Seurat <- readRDS(paste0(plot_save_dir,"/SDR009_Seurat_filtered_clustered.rds"))
+
+#Calculate average UMIs
+
+#Check average number of UMIs
+metadata <- cDNA_data_Seurat@meta.data 
+
+avg_UMIs <- mean(metadata$nCount_RNA)
+
+#group_colors <- c(PFA = "#003f5c", Glyoxal = "#ffa600")
+
+```
+
+
+
+
+
+
+#Make general dimplots
+
+
+#Plot Dimplot with samples and clusters
+
+
+```{r, fig.width = 4, fig.height = 3}
+
+cDNA_data_Seurat@meta.data <- metadata
+
+
+table(metadata$Type3) %>% prop.table()
+
+table(metadata$Type4)
+
+title = "SDR009_UMAP_Type2.pdf"
+p <- DimPlot(cDNA_data_Seurat, group.by = "Type2", cols = group_colors_Type3) + NoLegend()
+
+ggsave(filename = title, path = plot_save_dir, plot = p, device = "pdf", scale = 1,
+       width = 15, height = 15, units = "cm", dpi = 300)
+
+p
+
+
+title = "SDR009_UMAP_Type3.pdf"
+p <- DimPlot(cDNA_data_Seurat, group.by = "Type3", cols = group_colors_Type3) + NoLegend()
+
+ggsave(filename = title, path = plot_save_dir, plot = p, device = "pdf", scale = 1,
+       width = 15, height = 15, units = "cm", dpi = 300)
+
+p
+
+
+
+title = "SDR009_UMAP_Type4.pdf"
+p <- DimPlot(cDNA_data_Seurat, group.by = "Type4", cols = group_colors_Type3) + NoLegend()
+
+ggsave(filename = title, path = plot_save_dir, plot = p, device = "pdf", scale = 1,
+       width = 15, height = 15, units = "cm", dpi = 300)
+
+p
+
+
+
+title = "SDR009_UMAP_gDNA_cont.pdf"
+
+p <- FeaturePlot(cDNA_data_Seurat, features = "gDNA_cont", cols = c("slategray2","firebrick2"), pt.size = 0.5, reduction = "umap")
+
+ggsave(filename = title, path = plot_save_dir, plot = p, device = "pdf", scale = 1,
+       width = 15, height = 15, units = "cm", dpi = 300)
+
+
+
+title = "SDR009_UMAP_RNA_reads_cont.pdf"
+
+p <- FeaturePlot(cDNA_data_Seurat, features = "RNA_reads_cont", cols = c("slategray2","firebrick2"), pt.size = 0.5, reduction = "umap")
+
+ggsave(filename = title, path = plot_save_dir, plot = p, device = "pdf", scale = 1,
+       width = 15, height = 15, units = "cm", dpi = 300)
+
+
+title = "SDR009_UMAP_RNA_umis_cont.pdf"
+
+p <- FeaturePlot(cDNA_data_Seurat, features = "RNA_umis_cont", cols = c("slategray2","firebrick2"), pt.size = 0.5, reduction = "umap")
+
+ggsave(filename = title, path = plot_save_dir, plot = p, device = "pdf", scale = 1,
+       width = 15, height = 15, units = "cm", dpi = 300)
+
+
+
+
+
+
+
+title = "SDR009_UMAP_Cluster.pdf"
+
+p <- DimPlot(cDNA_data_Seurat, group.by = "seurat_clusters") + NoLegend()
+
+ggsave(filename = title, path = plot_save_dir, plot = p, device = "pdf", scale = 1,
+       width = 15, height = 15, units = "cm", dpi = 300)
+
+
+
+
+title = "SDR009_UMAP_nFeature_gDNA.pdf"
+
+p <- FeaturePlot(cDNA_data_Seurat, features = "nFeature_gDNA", cols = c("slategray2","firebrick2"), pt.size = 0.5, reduction = "umap")
+
+ggsave(filename = title, path = plot_save_dir, plot = p, device = "pdf", scale = 1,
+       width = 15, height = 15, units = "cm", dpi = 300)
+
+
+
+title = "SDR009_UMAP_nFeature_RNA.pdf"
+
+p <- FeaturePlot(cDNA_data_Seurat, features = "nFeature_RNA", cols = c("slategray2","firebrick2"), pt.size = 0.5, reduction = "umap")
+
+ggsave(filename = title, path = plot_save_dir, plot = p, device = "pdf", scale = 1,
+       width = 15, height = 15, units = "cm", dpi = 300)
+
+
+
+title = "SDR009_UMAP_nReads_gDNA.pdf"
+
+p <- FeaturePlot(cDNA_data_Seurat, features = "nReads_gDNA", cols = c("slategray2","firebrick2"), pt.size = 0.5, reduction = "umap", max.cutoff = 2000)
+
+ggsave(filename = title, path = plot_save_dir, plot = p, device = "pdf", scale = 1,
+       width = 15, height = 15, units = "cm", dpi = 300)
+
+
+title = "SDR009_UMAP_nCount_RNA.pdf"
+p <- FeaturePlot(cDNA_data_Seurat, features = "nCount_RNA", cols = c("slategray2","firebrick2"), pt.size = 0.5, reduction = "umap",
+                 max.cutoff = 2000)
+
+ggsave(filename = title, path = plot_save_dir, plot = p, device = "pdf", scale = 1,
+       width = 15, height = 15, units = "cm", dpi = 300)
+
+
+title = "SDR009_UMAP_nReads_RNA.pdf"
+p <- FeaturePlot(cDNA_data_Seurat, features = "nReads_RNA", cols = c("slategray2","firebrick2"), pt.size = 0.5, reduction = "umap",
+                 max.cutoff = 2000)
+
+ggsave(filename = title, path = plot_save_dir, plot = p, device = "pdf", scale = 1,
+       width = 15, height = 15, units = "cm", dpi = 300)
+
+
+title = "SDR009_UMAP_sbc_ratio.pdf"
+
+p <- FeaturePlot(cDNA_data_Seurat, features = "cDNA_ratio_sbc", cols = c("slategray2","firebrick2"), pt.size = 0.5, reduction = "umap")
+
+ggsave(filename = title, path = plot_save_dir, plot = p, device = "pdf", scale = 1,
+       width = 15, height = 15, units = "cm", dpi = 300)
+
+
+
+```
+
+
+
+

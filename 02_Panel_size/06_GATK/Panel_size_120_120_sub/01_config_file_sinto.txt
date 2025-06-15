@@ -1,0 +1,14 @@
+Batch_1	/g/steinmetz/projects/SDR_Shared_John_Dominik/SDR002/20240918_GATK_Subset/SDR002_120_120_sub/01_Input_cells_txt/Batch_1.txt
+Batch_10	/g/steinmetz/projects/SDR_Shared_John_Dominik/SDR002/20240918_GATK_Subset/SDR002_120_120_sub/01_Input_cells_txt/Batch_10.txt
+Batch_11	/g/steinmetz/projects/SDR_Shared_John_Dominik/SDR002/20240918_GATK_Subset/SDR002_120_120_sub/01_Input_cells_txt/Batch_11.txt
+Batch_12	/g/steinmetz/projects/SDR_Shared_John_Dominik/SDR002/20240918_GATK_Subset/SDR002_120_120_sub/01_Input_cells_txt/Batch_12.txt
+Batch_13	/g/steinmetz/projects/SDR_Shared_John_Dominik/SDR002/20240918_GATK_Subset/SDR002_120_120_sub/01_Input_cells_txt/Batch_13.txt
+Batch_14	/g/steinmetz/projects/SDR_Shared_John_Dominik/SDR002/20240918_GATK_Subset/SDR002_120_120_sub/01_Input_cells_txt/Batch_14.txt
+Batch_2	/g/steinmetz/projects/SDR_Shared_John_Dominik/SDR002/20240918_GATK_Subset/SDR002_120_120_sub/01_Input_cells_txt/Batch_2.txt
+Batch_3	/g/steinmetz/projects/SDR_Shared_John_Dominik/SDR002/20240918_GATK_Subset/SDR002_120_120_sub/01_Input_cells_txt/Batch_3.txt
+Batch_4	/g/steinmetz/projects/SDR_Shared_John_Dominik/SDR002/20240918_GATK_Subset/SDR002_120_120_sub/01_Input_cells_txt/Batch_4.txt
+Batch_5	/g/steinmetz/projects/SDR_Shared_John_Dominik/SDR002/20240918_GATK_Subset/SDR002_120_120_sub/01_Input_cells_txt/Batch_5.txt
+Batch_6	/g/steinmetz/projects/SDR_Shared_John_Dominik/SDR002/20240918_GATK_Subset/SDR002_120_120_sub/01_Input_cells_txt/Batch_6.txt
+Batch_7	/g/steinmetz/projects/SDR_Shared_John_Dominik/SDR002/20240918_GATK_Subset/SDR002_120_120_sub/01_Input_cells_txt/Batch_7.txt
+Batch_8	/g/steinmetz/projects/SDR_Shared_John_Dominik/SDR002/20240918_GATK_Subset/SDR002_120_120_sub/01_Input_cells_txt/Batch_8.txt
+Batch_9	/g/steinmetz/projects/SDR_Shared_John_Dominik/SDR002/20240918_GATK_Subset/SDR002_120_120_sub/01_Input_cells_txt/Batch_9.txt

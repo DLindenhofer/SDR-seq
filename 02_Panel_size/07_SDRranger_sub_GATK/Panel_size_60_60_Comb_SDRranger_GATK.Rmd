@@ -1,0 +1,1802 @@
+---
+title: "SDR002_60_60_Comb_SDRranger_GATK_full"
+output: html_document
+date: "2024-09-19"
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+#Load packages and define file paths
+
+```{r}
+
+library(Seurat)
+library(dplyr)
+library(ggplot2)
+library(Matrix)
+library(reshape2)
+library(data.table)
+library(stringr)
+library(tidyr)
+library(scales)
+library(rtracklayer)
+library(here)
+library(data.table)
+library(readr)
+library(Biostrings)
+library(purrr)
+
+plot_save_dir <- here("SDR002_60_60_Comb_Plots_GATK")
+
+#Ref lists for gDNA
+gDNA_60_60_targets <- read.delim("/Users/dominik.lindenhofer/Documents/Data_Local/202307_SDR002/SDR002_Refs_lists_R/SDR002_gDNA_60_60_targets.txt", header = FALSE) %>% pull(1)
+gDNA_60_60_targets <- gDNA_60_60_targets %>% str_replace_all("_", "-")
+
+gDNA_120_120_targets <- read.delim("/Users/dominik.lindenhofer/Documents/Data_Local/202307_SDR002/SDR002_Refs_lists_R/SDR002_gDNA_120_120_targets.txt", header = FALSE) %>% pull(1)
+gDNA_120_120_targets <- gDNA_120_120_targets %>% str_replace_all("_", "-")
+
+gDNA_240_240_targets <- read.delim("/Users/dominik.lindenhofer/Documents/Data_Local/202307_SDR002/SDR002_Refs_lists_R/SDR002_gDNA_240_240_targets.txt", header = FALSE) %>% pull(1)
+gDNA_240_240_targets <- gDNA_240_240_targets %>% str_replace_all("_", "-")
+
+panel = 60
+
+
+file_save_dir <- "/Users/dominik.lindenhofer/ownCloud/Shared_project_folder/Paper_drafts/2022_SDR_Paper/Source_data/Individual_files_all"
+
+
+
+```
+
+
+#Read in data and combine
+
+
+```{r}
+
+
+cDNA_data_Seurat_60 <- readRDS("/Users/dominik.lindenhofer/Documents/Data_Local/202307_SDR002/20240330_SDRranger_Analysis_Subset_Subsample-V2/SDR002_60_60_Plots/SDR002_60_60_Seurat.rds")
+
+cDNA_data_Seurat_60fail <- readRDS("/Users/dominik.lindenhofer/Documents/Data_Local/202307_SDR002/20240330_SDRranger_Analysis_Subset_Subsample-V2/SDR002_60_60fail_Plots/SDR002_60_60fail_Seurat.rds")
+
+
+#Merge the 2 seurats
+
+cDNA_data_Seurat <-merge(cDNA_data_Seurat_60, cDNA_data_Seurat_60fail, project = "SDR002_60")
+
+metadata <- cDNA_data_Seurat@meta.data
+metadata$cell_merge <- rownames(metadata)
+
+cDNA_data_Seurat@assays$RNA <- JoinLayers(cDNA_data_Seurat)
+cDNA_data_Seurat@assays$gDNA <- JoinLayers(cDNA_data_Seurat@assays$gDNA )
+
+
+#Make new Seurat with combined data - merge somehow gives an issue
+
+RNA_mat <- cDNA_data_Seurat@assays$RNA@assays$RNA$counts %>% as.data.frame()
+all.equal(colnames(RNA_mat), metadata$cell_merge )
+gDNA_mat <- cDNA_data_Seurat@assays$gDNA$counts
+all.equal(colnames(gDNA_mat), metadata$cell_merge )
+
+
+#Make Seurat
+cDNA_data_Seurat <- CreateSeuratObject(RNA_mat, project = "SDR002")
+
+#Add metadata
+all.equal(colnames(cDNA_data_Seurat), rownames(metadata))
+cDNA_data_Seurat <- AddMetaData(object = cDNA_data_Seurat, metadata = metadata)
+
+
+#Add gDNA as an assay
+
+
+#Make assay and add to Seurat
+gDNA_assay <- CreateAssay5Object(counts = as.sparse(gDNA_mat))
+cDNA_data_Seurat[["gDNA"]] <- gDNA_assay
+Assays(cDNA_data_Seurat)
+
+
+#Prepare cell names for renaming
+cells_60 <- metadata %>% filter(orig.ident == "SDR002_60_60") %>% select(cell_merge) %>% pull(1)
+cells_60fail <- metadata %>% filter(orig.ident == "SDR002_60_60fail") %>% select(cell_merge) %>% pull(1)
+
+
+
+#Load all variants again 
+
+#60
+
+all_var_full_60 <- read.delim("SDR002_60_60_Plots_GATK/01_Variants/SDR002_60_60_sub_merged.txt", header = TRUE)
+
+#Fill in empty information properly 
+all_var_full_60 <- all_var_full_60  %>% mutate(ID = ".", QUAL = ".", FILTER = ".", FORMAT = "GT:AD:DP:GQ:PL", INFO = ".")
+
+
+#Rename cells to have suffix like in merged seurat
+to_add_60 <- all_var_full_60[,c(1:9)]
+all_var_60 <- all_var_full_60[,c(10:length(all_var_full_60))]
+
+all.equal(colnames(cDNA_data_Seurat_60), colnames(all_var_60))
+colnames(all_var_60) <- cells_60
+all_var_full_60 <- cbind(to_add_60, all_var_60)
+
+
+#60fail
+
+all_var_full_60fail <- read.delim("SDR002_60_60fail_Plots_GATK/01_Variants/SDR002_60_60fail_sub_merged.txt", header = TRUE)
+
+#Fill in empty information properly 
+all_var_full_60fail <- all_var_full_60fail  %>% mutate(ID = ".", QUAL = ".", FILTER = ".", FORMAT = "GT:AD:DP:GQ:PL", INFO = ".")
+
+
+#Rename cells to have suffix like in merged seurat
+to_add_60fail <- all_var_full_60fail[,c(1:9)]
+all_var_60fail <- all_var_full_60fail[,c(10:length(all_var_full_60fail))]
+
+all.equal(colnames(cDNA_data_Seurat_60fail), colnames(all_var_60fail))
+colnames(all_var_60fail) <- cells_60fail
+all_var_full_60fail <- cbind(to_add_60fail, all_var_60fail)
+
+
+#Merge the variant files
+
+
+all_var_full <- full_join(all_var_full_60, all_var_full_60fail, by = c("X.CHROM", "POS", "ID", "REF", "ALT", "QUAL", "FILTER", "INFO", "FORMAT"))
+
+
+```
+
+
+
+
+#Make metadata for genoytpes
+
+```{r}
+
+#Split for processing and adding
+
+#for metadata
+to_add <- all_var_full[,c(1:9)]
+
+#For variants
+all_var <- all_var_full[,c(10:length(all_var_full))]
+all_var <- as.data.table(all_var)
+
+
+#_________________________________________________________________________
+
+#Make metadata table for Genotypes - NO VEP here
+
+#Split info column - only first row now extracted - multiple entries per gene - not used here
+#to_add_info <- lapply(to_add$INFO, function(x) unlist(strsplit(x, split = ",-")))
+#to_add_info_split <- data.frame(do.call('rbind', strsplit(as.character(to_add_info),'|',fixed=TRUE)))
+#to_add_info_split_for_merge <- data.frame(Consequence = to_add_info_split$X2, 
+                                          #IMPACT=to_add_info_split$X3, 
+                                          #SYMBOL=to_add_info_split$X4, 
+                                          #Gene= to_add_info_split$X5, 
+                                          #Feature_type =to_add_info_split$X6, 
+                                          #BIOTYPE =to_add_info_split$X7, 
+                                          #SNP_ID = to_add_info_split$X18)
+
+#Add to metadata
+#to_add <- cbind(to_add, to_add_info_split_for_merge)
+
+Geno_meta <- to_add
+
+#Unique identifier for each variant
+#Modify Consequence string so its compatible with seurat later
+
+#Geno_meta <- Geno_meta %>% mutate(Consequence = str_replace_all(Consequence, "_", ":"))
+Geno_meta <- Geno_meta %>% mutate(ID_Geno = str_c(X.CHROM, POS, REF, ALT, sep = "-"))
+
+
+#Annotate AMP_ID to each variant
+
+annot <- read.delim("REF_lists/SDR002_genomic_annotation_file.txt")
+
+
+Geno_meta_gr <- Geno_meta %>% select(Chromosome = X.CHROM, Start = POS, END = POS, ID = ID_Geno)
+Geno_meta_gr <-  makeGRangesFromDataFrame(Geno_meta_gr, keep.extra.columns = TRUE)
+
+annot_gr <- annot %>% select(Chromosome, Start, End, ID = ID_full)
+annot_gr <- makeGRangesFromDataFrame(annot_gr, keep.extra.columns = TRUE)
+
+
+
+Overlap <- findOverlaps(Geno_meta_gr, annot_gr)
+#gene_names <- CharacterList(split(SDR005_hg38_MB_input_gr$Gene[subjectHits(Overlap)],queryHits(Overlap)))
+Gene<- split(annot_gr$ID[subjectHits(Overlap)], queryHits(Overlap))
+Gene <- CharacterList(split(annot_gr$ID[subjectHits(Overlap)], queryHits(Overlap)))
+
+mcols(Geno_meta_gr) <- DataFrame(mcols(Geno_meta_gr), Gene) 
+
+#Make dataframe
+Geno_meta_add <- Geno_meta_gr %>% as.data.frame() %>% tibble::as_tibble() 
+Geno_meta_add  <- unnest(Geno_meta_add, cols = Gene) %>% distinct() %>% select(ID, Amp_ID = Gene)
+Geno_meta <- Geno_meta %>% left_join(Geno_meta_add, by = c("ID_Geno" = "ID"))
+
+
+#Make compatible with merging later
+
+Geno_meta <- Geno_meta %>% mutate(Amp_ID = gsub("_", "-", Amp_ID))
+
+
+#Also add in target name
+#annot_add <- annot %>% select(ID = Amp_ID, SNP_ID_annot = SNP_ID, Gene_annot = Gene)
+#Geno_meta <- Geno_meta %>% left_join(annot_add, by = c("Amp_ID" = "ID"))
+
+#Unique identifier for each variant - modify with target_name from Julia and not with the one from VEP
+#Modify Consequence string so its compatible with seurat later
+
+#Geno_meta <- Geno_meta %>% mutate(ID_Geno = str_c(Gene_annot, `#CHROM`, POS, REF, ALT, Consequence ,sep = "-"))
+
+
+```
+
+
+## Add full genotype data as an assay 
+0 (WT), 1 (HET), 2 (HOM) - rest of information as list in @misc slot
+No Cutoff first - do that in a second assay
+
+```{r}
+
+#For variants
+all_var <- all_var_full[,c(10:length(all_var_full))]
+all_var <- as.data.table(all_var)
+
+
+#_________________________________________________________________________
+#Genotype
+
+#Extract the genotype information from the filtered variant file
+#Get genotype
+extract_vcf_info <- function(x) {
+  sapply(strsplit(x, ":"), function(y) y[1])
+}
+
+all_var_GT <- all_var[, lapply(.SD, extract_vcf_info)]
+
+
+#Replace 0/1 with 1 , 1/1 with 2, NA with 0
+
+all_var_GT  <- all_var_GT %>%
+  mutate(across(everything(), ~ case_when(
+    . == "0/1" ~ "1",
+    . == "1/1" ~ "2",
+    TRUE ~ as.character(.)
+  ))) %>%
+  mutate(across(everything(), as.numeric)) %>%
+  mutate(across(everything(), ~ replace_na(., 0)))
+
+
+#Integreate 0/0 based on read coverage per cell 
+
+cut_off = 0 # no cutoff at this point
+
+gDNA_mat <- cDNA_data_Seurat@assays$gDNA$counts %>% as.data.frame()
+all.equal(colnames(gDNA_mat), colnames(all_var))
+
+gDNA_mat <- gDNA_mat %>% mutate(Amp_ID = rownames(gDNA_mat))
+
+#Get outline of Geno - information 
+
+gDNA_mat_mod <- data.frame(Amp_ID = Geno_meta$Amp_ID)
+gDNA_mat_mod <- gDNA_mat_mod %>% left_join(gDNA_mat, by = c("Amp_ID"))
+gDNA_mat_mod <- gDNA_mat_mod %>% select(-Amp_ID)
+rownames(gDNA_mat_mod) <- Geno_meta$ID_Geno
+
+
+gDNA_mat_mod_rep <- gDNA_mat_mod %>%   
+    mutate(across(everything(), ~ case_when(
+    . > cut_off ~ 0,
+    . <= cut_off ~ NA
+  )))
+
+
+#Combine both matrices for a full Genotype matrix - NAs introduced if not covered by cutoff
+all_var_GT <- as.matrix(all_var_GT) + as.matrix(gDNA_mat_mod_rep) %>% as.data.frame()
+rownames(all_var_GT ) <- Geno_meta$ID_Geno
+
+#Check order of cells again
+all.equal(colnames(all_var_GT), colnames(cDNA_data_Seurat))
+
+
+
+#_________________________________________________________________________
+#Read depth 
+
+#RD different in gDNA matrix and variant calling file 
+
+#Fore read depth
+extract_vcf_info <- function(x) {
+  sapply(strsplit(x, ":"), function(y) y[3])
+}
+
+all_var_DP <- all_var[, lapply(.SD, extract_vcf_info)]
+#all_var_DP <- cbind(to_add, all_var_DP)
+
+all_var_DP <- all_var_DP %>% 
+               mutate_all(as.numeric)
+
+#Make DF for addition to produce NA values in gDNA mat for values that need to be substituted with read depth from GATK vcf file
+
+all_var_DP_0 <- all_var_DP %>%
+  mutate_all(~ifelse(is.na(.), 0, .)) %>% #if NA then to 0
+  mutate_all(~ifelse(. > 0, NA, .)) %>% #if not 0 then NA
+  mutate_all(as.numeric)
+
+#Add this matrix with gDNA_mat_mod to produce NA values where read depth of DP should be - then add 0 there
+gDNA_mat_mod <- as.matrix(gDNA_mat_mod) + as.matrix(all_var_DP_0) %>% as.data.frame()
+
+#Make 0 in both for next addition to get rid of NA values
+gDNA_mat_mod <- gDNA_mat_mod %>%  mutate_all(~ifelse(is.na(.), 0, .))
+all_var_DP <- all_var_DP %>% mutate_all(~ifelse(is.na(.), 0, .)) 
+
+#Now add the DP matrix with it to retain the original DP read depth 
+all_var_DP <- as.matrix(gDNA_mat_mod) + as.matrix(all_var_DP) %>% as.data.frame()
+
+
+
+#_________________________________________________________________________
+#Calculate VAF with alternative reads
+
+#For allelic reads
+extract_vcf_info <- function(x) {
+  sapply(strsplit(x, ":"), function(y) y[2])
+}
+
+all_var_AD <- all_var[, lapply(.SD, extract_vcf_info)]
+
+ALT_reads <-  all_var_AD %>%
+         mutate_all(~sub(".*,", "", .)) %>%
+  mutate_all(as.numeric) %>% 
+  mutate_all(~ifelse(is.na(.), 0, .)) 
+
+
+VAF <- as.matrix(ALT_reads)/as.matrix(all_var_DP) %>% as.data.frame()  %>%  mutate_all(as.numeric) 
+
+
+#_________________________________________________________________________
+#Genotype Quality 
+
+
+#Fore Genotype Quality 
+extract_vcf_info <- function(x) {
+  sapply(strsplit(x, ":"), function(y) y[4])
+}
+
+all_var_GQ <- all_var[, lapply(.SD, extract_vcf_info)]
+#all_var_GQ <- cbind(to_add, all_var_GQ)
+
+all_var_GQ <- all_var_GQ %>% 
+               mutate_all(as.numeric) 
+
+
+#_________________________________________________________________________
+#Add to Seurat 
+
+#GT as assay
+#Geno_meta as metadata
+#rest of information (all_var, RD, VAF, GQ) as list
+
+all.equal(rownames(all_var_GT), Geno_meta$ID_Geno)
+all.equal(colnames(all_var_GT), colnames(cDNA_data_Seurat))
+
+
+#Make assay and add to Seurat
+GT_assay <- CreateAssay5Object(counts = as.sparse(all_var_GT))
+cDNA_data_Seurat[["Geno"]] <- GT_assay
+Assays(cDNA_data_Seurat)
+
+#Add metadata
+cDNA_data_Seurat@assays$Geno@meta.data <- Geno_meta
+
+
+#Make list for the rest of the information 
+all_var <- all_var %>% as.data.frame()
+rownames(all_var) <- Geno_meta$ID_Geno
+
+all_var_DP <- all_var_DP %>% as.data.frame()
+rownames(all_var_DP) <- Geno_meta$ID_Geno
+
+VAF <- VAF %>% as.data.frame()
+rownames(VAF) <- Geno_meta$ID_Geno
+
+
+
+all_var_GQ <- all_var_GQ %>% as.data.frame()
+rownames(all_var_GQ) <- Geno_meta$ID_Geno
+
+list_to_add <- list(full = all_var,
+                    DP = all_var_DP,
+                    VAF = VAF,
+                    GQ = all_var_GQ)
+
+#Add list to misc slot
+cDNA_data_Seurat@assays$Geno@misc <- list_to_add
+
+
+#Save again
+saveRDS(cDNA_data_Seurat, "SDR002_60_60_Comb_Plots_GATK/SDR002_60_60_Comb_Seurat_filtered_GATK.rds")
+
+
+```
+
+
+#Apply filtering on read depth and GQ
+
+```{r}
+
+#Load data
+
+cDNA_data_Seurat <- readRDS("SDR002_60_60_Comb_Plots_GATK/SDR002_60_60_Comb_Seurat_filtered_GATK.rds")
+
+#Get all matrices
+GT_mat <- cDNA_data_Seurat@assays$Geno$counts %>% as.data.frame()
+Geno_meta <- cDNA_data_Seurat@assays$Geno@meta.data
+
+Geno_list <- cDNA_data_Seurat@assays$Geno@misc
+list2env(Geno_list, envir = .GlobalEnv)
+
+
+#Set cutoffs 
+
+cut_off_RD = 10
+cut_off_GQ = 30
+
+#Make RD cutoff - make data frame dataframe to produce NAs 
+DP_rep <- DP %>%   
+    mutate(across(everything(), ~ case_when(
+    . > cut_off_RD ~ 0,
+    . <= cut_off_RD ~ NA
+  )))
+
+#Make GQ cutoff - make data frame dataframe to produce NAs 
+
+GQ_rep <- GQ %>%
+  mutate(across(everything(), ~ case_when(
+    is.na(.) ~ 99,            #Set NAs to maximum value - no WT data integrated here
+    TRUE ~ as.numeric(.)
+  ))) %>%
+  mutate(across(everything(), ~ case_when(
+    . > cut_off_GQ ~ 0,
+    . <= cut_off_GQ ~ NA
+  )))
+
+
+#Add in all matrixes with GT to produce NAs 
+
+GT_mat_mod <- as.matrix(GT_mat) + as.matrix(DP_rep) + as.matrix(GQ_rep) %>% as.data.frame()
+
+
+#Add back into new assay
+
+
+#Make assay and add to Seurat
+GT_mod_assay <- CreateAssay5Object(counts = as.sparse(GT_mat_mod))
+cDNA_data_Seurat[["Geno_filtered"]] <- GT_mod_assay
+Assays(cDNA_data_Seurat)
+
+#Add metadata
+cDNA_data_Seurat@assays$Geno_filtered@meta.data <- Geno_meta
+
+#Add list data - unfiltered
+
+cDNA_data_Seurat@assays$Geno_filtered@misc <- Geno_list
+
+#Save again
+saveRDS(cDNA_data_Seurat, "SDR002_60_60_Comb_Plots_GATK/SDR002_60_60_Comb_Seurat_filtered_Geno.rds")
+
+```
+
+
+#Update Geno_meta table to include metrics needed later
+
+```{r}
+
+#On filtered GT data 
+
+GT_mat <- cDNA_data_Seurat@assays$Geno_filtered$counts %>% as.data.frame()
+
+nCells <- length(colnames(GT_mat))
+
+#Get ref_seqs
+ref_seqs <- read.csv("/Users/dominik.lindenhofer/ownCloud/Shared_project_folder/scDNA-scRNA-seq/20230419_SDR002_Panel_size_testing/9_gDNA_REF-V2/SDR002_gDNA_targets-V2.csv")
+ref_seqs <- ref_seqs %>% mutate(ID = gsub("_", "-", ID))
+
+# Convert the data frame to a matrix for faster operations
+GT_mat_matrix <- as.matrix(GT_mat)
+
+# Count 
+NA_count <- rowSums(is.na(GT_mat_matrix))
+REF_count <- rowSums(GT_mat_matrix == 0, na.rm = TRUE)
+HET_count <- rowSums(GT_mat_matrix == 1, na.rm = TRUE)
+ALT_count <- rowSums(GT_mat_matrix == 2, na.rm = TRUE)
+
+# Combine into a new data frame
+counts <- data.frame(NA_count, REF_count, HET_count, ALT_count)
+
+remove(NA_count)
+remove(REF_count)
+remove(HET_count)
+remove(ALT_count)
+
+
+rownames(counts) <- rownames(GT_mat)
+counts_frac <- counts/nCells
+counts_frac$ID_Geno <- rownames(counts_frac)
+
+#Get Geno_meta
+
+Geno_meta <- cDNA_data_Seurat@assays$Geno_filtered@meta.data
+Geno_meta <- Geno_meta %>% left_join(counts_frac, by = "ID_Geno")
+
+#Load annotaion file and add
+annot <- read.delim("REF_lists/SDR002_genomic_annotation_file.txt") %>% 
+  dplyr::select(-ID) %>% 
+  dplyr::rename(Amp_ID = ID_full)  %>% 
+  mutate(Amp_ID = gsub("_", "-", Amp_ID)) 
+
+Geno_meta <- Geno_meta %>% left_join(annot, by = c("Amp_ID"))
+
+
+#Also add in the gDNA primers length
+
+gDNA_primers_df <- read.csv("REF_lists/SDR002_gDNA_primers.csv") %>% dplyr::select(-Panel) %>% distinct()
+gDNA_primers_df <- gDNA_primers_df %>% mutate(ID = gsub("_", "-", ID))
+gDNA_primers_df <- gDNA_primers_df %>% mutate(ID_prim = str_c(gDNA_primers_df$ID, gDNA_primers_df$Dir, sep = "-"))
+
+CS_overhang <- "GTACTCGCAGTAGTC"
+R2N_overhang <- "GTCTCGTGGGCTCGGAGATGTGTATAAGAGACAG"
+
+#Remove overhang sequences
+gDNA_primers_df <- gDNA_primers_df %>% mutate(Sequence = gsub(CS_overhang, "", Sequence))
+gDNA_primers_df <- gDNA_primers_df %>% mutate(Sequence = gsub(R2N_overhang, "", Sequence))
+
+gDNA_primers_df_for <- gDNA_primers_df %>% filter(Dir == "for")
+gDNA_primers_df_rev <- gDNA_primers_df %>% filter(Dir == "rev")
+
+#Add the length of the primer
+
+gDNA_primers_df_for <- gDNA_primers_df_for %>% mutate(Prim_leng_for = str_count(Sequence))
+gDNA_primers_df_rev <- gDNA_primers_df_rev %>% mutate(Prim_leng_rev = str_count(Sequence))
+
+to_add_for <- gDNA_primers_df_for %>% dplyr::select(ID, Prim_leng_for)
+to_add_rev <- gDNA_primers_df_rev %>% dplyr::select(ID, Prim_leng_rev)
+
+to_add_prim <- to_add_for  %>% left_join(to_add_rev, by = "ID")
+
+#Add to Geno_meta and Add position where amplicon starts after primer
+
+Geno_meta <- Geno_meta %>% left_join(to_add_prim, by = c("Amp_ID" = "ID"))
+Geno_meta <- Geno_meta %>% mutate(Start_seq = Start + Prim_leng_for,
+                                  End_seq = End - Prim_leng_rev)
+
+#Add this back to Seurat
+
+cDNA_data_Seurat@assays$Geno_filtered@meta.data <- Geno_meta
+
+#Save again
+saveRDS(cDNA_data_Seurat, "SDR002_60_60_Comb_Plots_GATK/SDR002_60_60_Comb_Seurat_filtered_Geno.rds")
+
+
+```
+
+
+
+#Plot coverage per amplicon
+
+```{r}
+
+cDNA_data_Seurat <- readRDS("SDR002_60_60_Comb_Plots_GATK/SDR002_60_60_Comb_Seurat_filtered_Geno.rds")
+gDNA_mat <- cDNA_data_Seurat@assays$gDNA$counts %>% as.data.frame()
+
+#Filter for correct targets in this panel 
+
+gDNA_mat <- gDNA_mat %>% mutate(Amp_ID = rownames(gDNA_mat))
+gDNA_mat <- gDNA_mat %>% filter(Amp_ID %in% gDNA_60_60_targets)
+gDNA_mat <- gDNA_mat %>% dplyr::select(-Amp_ID)
+
+#Calculate average
+
+amp_coverage <- rowSums(gDNA_mat) %>% as.data.frame()
+colnames(amp_coverage) <- c("nReads_gDNA")
+amp_coverage$Amp_ID <-rownames(amp_coverage) 
+
+#Set order 
+
+amp_coverage <- amp_coverage %>% arrange(desc(nReads_gDNA))
+
+
+title = "Amp_coverage.pdf"
+
+p <- amp_coverage %>% 
+  	ggplot(aes(x=factor(Amp_ID, levels = unique(Amp_ID)), y = nReads_gDNA)) + 
+  	geom_bar(stat = "identity") +
+  	theme_classic() +
+  	theme(axis.text.x = element_text(angle = 45, vjust = 1, hjust=1)) +
+    #scale_y_continuous(limits = c(0,10000))+
+  	theme(plot.title = element_text(hjust=0.5, face="bold")) +
+  	ggtitle(title)+
+    labs(x = "coverage", y = "nReads")+
+    #scale_fill_manual(values = group_colors)+
+    guides(fill = "none")
+
+
+ggsave(filename = title, path = plot_save_dir, plot = p, device = "pdf", scale = 1,
+       width = 30, height = 15, units = "cm", dpi = 300)
+p
+
+```
+
+
+
+#Plot frac cells detected in vs coverage
+
+
+```{r}
+
+cut_off_RD = 10
+
+gDNA_mat_count <- ifelse(gDNA_mat > cut_off_RD, 1, 0)
+
+gDNA_cells_detect <- rowSums(gDNA_mat_count) %>% as.data.frame()
+colnames(gDNA_cells_detect) <- c("gDNA_cells_detect")
+gDNA_cells_detect$Amp_ID <- rownames(gDNA_cells_detect)
+gDNA_cells_detect$nCells_tot <- length(colnames(gDNA_mat))
+gDNA_cells_detect <- gDNA_cells_detect %>% mutate(nCells_frac = gDNA_cells_detect/nCells_tot)
+
+#Merge with above dataframe
+
+gDNA_cells_detect <- gDNA_cells_detect %>% left_join(amp_coverage, by = "Amp_ID")
+gDNA_cells_detect <- gDNA_cells_detect %>% mutate(nReads_gDNA_log1p = log1p(nReads_gDNA))
+
+#Classify dropouts 
+
+gDNA_cells_detect <- gDNA_cells_detect %>% mutate(Class = if_else(nCells_frac > 0.8, "HIGH", "LOW"))
+
+title = "nReads_gDNA_vs_frac_cells.pdf"
+p <- gDNA_cells_detect %>% 
+  	ggplot(
+  	 # aes(x=nReads_gDNA, y=nCells_frac, color=nFeature_gDNA_cut_perc)) + 
+    aes(x=nReads_gDNA, y=nCells_frac)) + 
+  	geom_point(size = 3) + 
+  geom_hline(yintercept = 0.8, linetype='dashed')+
+  scale_y_continuous(labels = scales::percent_format(scale = 100)) +
+	#scale_colour_gradient(low = "gray90", high = "#990000", limits = c(0,1)) +
+  #xlim(c(0,30))+
+    #ylim(c(0,30))+
+  	#scale_x_log10(limits = c(10,100000)) + 
+  	#scale_y_log10(limits = c(10,100000)) + 
+  	theme_classic() +
+  	#geom_vline(xintercept = 10) +
+  	#geom_hline(yintercept = 10) +
+      labs(x = "nReads (gDNA)", y = "Fraction of cells dectected (%)")+
+    	theme(plot.title = element_text(hjust=0.5, face="bold")) +
+      guides(fill = "none", color = "none")+
+  	#facet_wrap(~orig.ident)+
+  	ggtitle(title)
+
+
+p
+
+ggsave(filename = title, path = plot_save_dir, plot = p, device = "pdf", scale = 1,
+       width = 15, height = 15, units = "cm", dpi = 300)
+
+
+
+
+
+```
+
+
+
+
+#Visualize nCells per Variant
+
+```{r}
+
+Geno_meta <- cDNA_data_Seurat@assays$Geno_filtered@meta.data
+GT_mat <- cDNA_data_Seurat@assays$Geno_filtered$counts %>% as.data.frame()
+GT_mat_mod <- GT_mat %>% mutate_all(~na_if(., 0))
+nCells_per_Variant <- rowSums(!is.na(GT_mat_mod ))
+nCells_per_Variant <- data.frame(nCells_per_Variant = nCells_per_Variant)
+
+nCells <- length(colnames(GT_mat))
+
+
+#Add Amp_ID
+nCells_per_Variant$ID_Geno <- rownames(nCells_per_Variant)
+to_add <- Geno_meta %>% dplyr::select(Amp_ID, ID_Geno)
+nCells_per_Variant <- nCells_per_Variant %>% left_join(to_add, by = "ID_Geno")
+
+#Quickly visualize
+
+title = "nCells_per_variant.pdf"
+p <- nCells_per_Variant %>%
+  ggplot(aes(x=nCells_per_Variant)) + 
+            scale_y_log10()+
+            #scale_x_continuous(limits = c(0,500))+
+            #scale_x_log10()+
+            geom_histogram(binwidth=50)+
+            labs(x = "nCells/Variant")+
+    	      theme_classic() +
+      	    theme(plot.title = element_text(hjust=0.5, face="bold")) +
+    	      ggtitle(title)
+
+p
+
+ggsave(filename = title, path = plot_save_dir, plot = p, device = "pdf", scale = 1,
+       width = 15, height = 15, units = "cm", dpi = 300)
+
+
+#Subset for high and low amplicons
+
+Amp_HIGH <- gDNA_cells_detect %>% filter(Class == "HIGH") %>% dplyr::select(Amp_ID) %>% pull(1)
+Amp_LOW <- gDNA_cells_detect %>% filter(Class == "LOW") %>% dplyr::select(Amp_ID) %>% pull(1)
+
+
+#Check for high and low
+
+title = "nCells_per_variant_HIGH.pdf"
+
+p <- nCells_per_Variant %>%
+  filter(Amp_ID %in% Amp_HIGH) %>%
+  ggplot(aes(x=nCells_per_Variant)) + 
+            scale_y_log10()+
+            #scale_x_continuous(limits = c(0,500))+
+            #scale_x_log10()+
+            geom_histogram(binwidth=50)+
+  labs(x = "nCells/Variant")+
+    	      theme_classic() +
+      	    theme(plot.title = element_text(hjust=0.5, face="bold")) +
+    	      ggtitle(title)
+
+p
+ggsave(filename = title, path = plot_save_dir, plot = p, device = "pdf", scale = 1,
+       width = 15, height = 15, units = "cm", dpi = 300)
+
+
+
+
+title = "nCells_per_variant_LOW.pdf"
+
+p <- nCells_per_Variant %>%
+  filter(Amp_ID %in% Amp_LOW) %>%
+  ggplot(aes(x=nCells_per_Variant)) + 
+            scale_y_log10()+
+            #scale_x_continuous(limits = c(0,500))+
+            #scale_x_log10()+
+            geom_histogram(binwidth=50)+
+  labs(x = "nCells/Variant")+
+    	      theme_classic() +
+      	    theme(plot.title = element_text(hjust=0.5, face="bold")) +
+    	      ggtitle(title)
+
+p
+ggsave(filename = title, path = plot_save_dir, plot = p, device = "pdf", scale = 1,
+       width = 15, height = 15, units = "cm", dpi = 300)
+
+
+
+#Make zoom in plot for lower counts on HIGH
+
+
+#Check for high and low
+
+title = "nCells_per_variant_HIGH_zoom.pdf"
+
+p <- nCells_per_Variant %>%
+  filter(Amp_ID %in% Amp_HIGH) %>%
+  ggplot(aes(x=nCells_per_Variant)) + 
+            scale_y_log10()+
+            scale_x_continuous(limits = c(0,nCells*0.2))+
+            #scale_x_log10()+
+            geom_histogram(binwidth=5)+
+  labs(x = "nCells/Variant")+
+    	      theme_classic() +
+      	    theme(plot.title = element_text(hjust=0.5, face="bold")) +
+    	      ggtitle(title)
+
+p
+ggsave(filename = title, path = plot_save_dir, plot = p, device = "pdf", scale = 1,
+       width = 15, height = 15, units = "cm", dpi = 300)
+
+
+#Determine variants for filtering to include in plotting
+
+
+
+nCells_cut <- round(nCells*0.8)
+
+nCells_per_Variant_sel <- nCells_per_Variant %>% filter(nCells_per_Variant >= nCells_cut)
+
+
+```
+
+
+
+
+
+
+#Plot some quality control plots - VAF vs read depth - add VAF as an assay 
+Subset for variants that have a high chance of being true in this experiment 
+
+```{r}
+
+metadata <- cDNA_data_Seurat@meta.data
+
+#Get all matrices
+GT_mat <- cDNA_data_Seurat@assays$Geno_filtered$counts %>% as.data.frame()
+Geno_meta <- cDNA_data_Seurat@assays$Geno_filtered@meta.data
+
+Geno_list <- cDNA_data_Seurat@assays$Geno_filtered@misc
+list2env(Geno_list, envir = .GlobalEnv)
+
+#Set which variants to filter for 
+
+to_filter <- nCells_per_Variant_sel$ID_Geno
+
+#Subset matrixes for plots 
+
+GT_mat <- GT_mat[to_filter,]
+VAF <- VAF[to_filter,]
+DP <- DP[to_filter,]
+GQ <- GQ[to_filter,]
+
+#_________________________________________________________________________
+#Respahe data for plotting
+
+#Genotype - still need to add in WT coverage !!! - done somewhat above already
+GT_mat <- GT_mat %>% t() %>% as.data.frame()
+GT_mat <- GT_mat %>% mutate(cell = rownames(GT_mat))
+GT_mat_res <- GT_mat %>% reshape2::melt(id.vars = c("cell"),
+                                        variable.name = "ID", 
+                                        value.name = "Genotype")
+
+
+#VAF
+VAF <- VAF %>% t() %>% as.data.frame()
+VAF <- VAF %>% mutate(cell = rownames(VAF))
+VAF_res <- VAF %>% reshape2::melt(id.vars = c("cell"),
+                                  variable.name = "ID", 
+                                  value.name = "VAF")
+
+
+
+#Read depth 
+DP <- DP %>% t() %>% as.data.frame()
+DP <- DP %>% mutate(cell = rownames(DP))
+DP_res <- DP %>% reshape2::melt(id.vars = c("cell"),
+                                variable.name = "ID", 
+                                value.name = "DP")
+
+
+
+
+#Genotype quality 
+GQ <- GQ  %>% t() %>% as.data.frame()
+GQ  <- GQ  %>% mutate(cell = rownames(GQ))
+GQ_res <- GQ  %>% reshape2::melt(id.vars = c("cell"),
+                                variable.name = "ID", 
+                                value.name = "GQ")
+
+
+
+#Join in all of them 
+
+Combined_VAF_to_plot <- GT_mat_res %>% left_join(VAF_res, by = c("cell" = "cell", "ID" = "ID"))
+Combined_VAF_to_plot <- Combined_VAF_to_plot %>% left_join(DP_res, by = c("cell" = "cell", "ID" = "ID"))
+Combined_VAF_to_plot <- Combined_VAF_to_plot %>% left_join(GQ_res, by = c("cell" = "cell", "ID" = "ID"))
+
+
+
+unique(Combined_VAF_to_plot$Genotype)
+#Filter out NA values - change later 
+
+#Combined_VAF_to_plot <- Combined_VAF_to_plot %>% filter(!is.na(Genotype))
+Combined_VAF_to_plot$Genotype <- factor(Combined_VAF_to_plot$Genotype, levels = c(2, 1, 0, NA))
+
+
+
+
+#_________________________________________________________________________
+#Plot VAF vs read depth - Color genotype
+
+#Only do plots for variants that we wanted to find
+
+out_put_dir <- here("SDR002_60_60_Comb_Plots_GATK/All_variants_VAF_plots_cut")
+plot_genes <- unique(to_filter)
+
+
+
+i=plot_genes[1]
+
+#group_colors <- c("1/1" = "forestgreen", "0/1" = "cyan2", "0/0" = "dodgerblue3", "./." = "grey")
+group_colors <- c("2" = "forestgreen", "1" = "cyan2", "0" = "dodgerblue3", "NA" = "grey")
+
+
+for (i in unique(plot_genes)){
+  Df_to_plot_i <- Combined_VAF_to_plot %>% filter(ID == i)
+  
+  p1 <-   Df_to_plot_i %>%
+    ggplot(aes(x=VAF, y=DP, color=Genotype)) + 
+  	geom_point(size = 5) + 
+	#scale_colour_gradient(low = "gray90", high = "#990000", limits = c(0,1)) +
+  #xlim(c(0,30))+
+    #ylim(c(0,30))+
+    scale_color_manual(values = group_colors )+
+  	scale_x_continuous(limits = c(0,1)) + 
+  	scale_y_log10(limits = c(1,10000), labels = scales::trans_format("log10", scales::math_format(10^.x))) +  
+  	theme_classic() +
+    labs(x = "Variant allele frequency (VAF)", y = "gDNA reads (log10)")+
+  	#geom_vline(xintercept = 10) +
+  	#geom_hline(yintercept = 10) +
+    	theme(plot.title = element_text(hjust=0.5, face="bold")) +
+    #facet_wrap("Type2")+
+  	ggtitle(i)
+  
+  
+  p2 <- Df_to_plot_i %>%
+    ggplot(aes(x=VAF, y=DP, color=GQ)) + 
+  	geom_point(size = 5) + 
+	scale_colour_gradient(low = "gray90", high = "#990000", limits = c(1,99)) +
+  #xlim(c(0,30))+
+    #ylim(c(0,30))+
+    #scale_color_manual(values = group_colors )+
+  	scale_x_continuous(limits = c(0,1)) + 
+  	scale_y_log10(limits = c(1,10000), labels = scales::trans_format("log10", scales::math_format(10^.x))) +  
+  	theme_classic() +
+        labs(x = "Variant allele frequency (VAF)", y = "gDNA reads (log10)")+
+  	#geom_vline(xintercept = 10) +
+  	#geom_hline(yintercept = 10) +
+    	theme(plot.title = element_text(hjust=0.5, face="bold")) +
+        #facet_wrap("Type2")+
+  	ggtitle(i)
+  
+p <- p1 + p2
+  
+
+  ggsave(paste(i,".pdf",sep = ""), path = out_put_dir, plot = p, device = "pdf", scale = 1,
+         width = 60, height = 15, units = "cm", dpi = 300)
+    
+}
+
+p
+
+```
+
+
+
+
+#Allelic dropout summary 
+Assume that the ones that are found very frequent are true HET
+Plot frequencies of total
+
+```{r}
+
+#Get Geno_meta
+
+Geno_meta <- cDNA_data_Seurat@assays$Geno_filtered@meta.data
+
+#Set which variants to filter for - HIGH from above
+
+to_filter <- nCells_per_Variant_sel$ID_Geno
+
+#Filter for HIGH ones
+Geno_meta_filter <- Geno_meta %>% filter(ID_Geno %in% to_filter) 
+counts_frac <- Geno_meta_filter %>% dplyr::select(ID_Geno, NA_count, REF_count, HET_count, ALT_count)
+                                           
+
+#Transform for plotting
+
+
+counts_frac_long <- counts_frac %>% 
+  pivot_longer(cols = -ID_Geno, names_to = "Geno", values_to = "frac")
+
+
+group_colors_Geno <- c("ALT_count" = "forestgreen", "HET_count" = "cyan2", "REF_count" = "dodgerblue3", "NA_count" = "grey")
+to_order <- c("HET_count", "REF_count", "ALT_count", "NA_count")
+  
+counts_frac_long$Geno <- factor(  counts_frac_long$Geno, levels = to_order)
+  
+title = "Allelic_dropout_Violin_all_alleles_HIGH.pdf"
+
+p <- counts_frac_long %>% 
+  	ggplot(aes(x=Geno, y=frac, fill=Geno)) + 
+  geom_violin(alpha = 0.2, adjust = 1)+
+  geom_boxplot(width = 0.25)+
+  	theme_classic() +
+  	theme(axis.text.x = element_text(angle = 45, vjust = 1, hjust=1)) +
+  	theme(plot.title = element_text(hjust=0.5, face="bold")) +
+    scale_y_continuous(limits = c(0,1), labels = scales::percent_format(scale = 100))+
+    labs(x = "Allele called", y = "Fraction of cells called (%)")+
+  	ggtitle(title)+
+    scale_fill_manual(values = group_colors_Geno)+
+    guides(fill = "none")
+
+
+ggsave(filename = title, path = plot_save_dir, plot = p, device = "pdf", scale = 1,
+       width = 10, height = 15, units = "cm", dpi = 300)
+
+p
+
+
+#Get average for each group 
+
+avg <- counts_frac_long %>% group_by(Geno) %>% summarize(average = mean(frac))
+
+#Summarize into correct and dropout only 
+
+counts_frac_edit <- counts_frac %>% mutate(HET_correct = HET_count,
+                                 Dropout = NA_count + REF_count + ALT_count)
+
+
+counts_frac_edit <- counts_frac_edit %>% dplyr::select(HET_correct, Dropout) 
+
+counts_frac_edit_long <- counts_frac_edit %>% pivot_longer(cols = everything(), names_to = "Geno", values_to = "frac")
+group_colors_Geno <- c(
+                        #"ALT_count" = "forestgreen", 
+                       "HET_correct" = "cyan2", 
+                       #"REF_count" = "dodgerblue3", 
+                       "Dropout" = "grey")
+to_order <- c("HET_correct", "Dropout")
+
+
+counts_frac_edit_long$Geno <- factor(  counts_frac_edit_long$Geno, levels = to_order)
+  
+title = "Allelic_dropout_Violin_sum_HIGH.pdf"
+
+p <- counts_frac_edit_long %>% 
+  	ggplot(aes(x=Geno, y=frac, fill=Geno)) + 
+  geom_violin(alpha = 0.2, adjust = 1)+
+  geom_boxplot(width = 0.25)+
+  	theme_classic() +
+  	theme(axis.text.x = element_text(angle = 45, vjust = 1, hjust=1)) +
+  	theme(plot.title = element_text(hjust=0.5, face="bold")) +
+    scale_y_continuous(limits = c(0,1), labels = scales::percent_format(scale = 100))+
+    labs(x = "Allele called", y = "Fraction of cells called (%)")+
+  	ggtitle(title)+
+    scale_fill_manual(values = group_colors_Geno)+
+    guides(fill = "none")
+
+
+ggsave(filename = title, path = plot_save_dir, plot = p, device = "pdf", scale = 1,
+       width = 10, height = 15, units = "cm", dpi = 300)
+
+p  
+  
+
+
+
+#Write out file 
+
+write.csv(counts_frac, file = paste0(plot_save_dir, "/counts_frac_df.csv"), quote = FALSE, row.names = FALSE, col.names = TRUE)
+```
+
+
+#Correlate sequencing depth with allelic dropout 
+```{r}
+
+
+#Add in Amp_ID
+to_add <- Geno_meta %>% dplyr::select(Amp_ID, ID_Geno)
+
+counts_frac <- counts_frac %>% left_join(to_add, by = "ID_Geno")
+
+#Add in read coverage from gDNA_cells_detect
+counts_frac <- counts_frac %>% left_join(gDNA_cells_detect, by = "Amp_ID")
+
+counts_frac_edit <- counts_frac %>% mutate(HET_correct = HET_count,
+                                 Dropout = NA_count + REF_count + ALT_count)
+
+title = "Allelic_dropout_vs_nReads_gDNA.pdf"
+
+p <- counts_frac_edit %>% 
+  	ggplot(
+  	 # aes(x=nReads_gDNA, y=nCells_frac, color=nFeature_gDNA_cut_perc)) + 
+    aes(x=nReads_gDNA, y=HET_correct, color = nCells_frac)) + 
+  	geom_point(size = 3) + 
+  #geom_hline(yintercept = 0.8, linetype='dashed')+
+	scale_colour_gradient(low = "gray90", high = "#990000", limits = c(0.8,1)) +
+  #xlim(c(0,30))+
+    #ylim(c(0,30))+
+  	#scale_x_log10(limits = c(10,100000)) + 
+  	#scale_y_log10(limits = c(10,100000)) + 
+    scale_y_continuous(limits = c(0,1), labels = scales::percent_format(scale = 100))+
+    labs(x = "Reads (gDNA)", y = "Fraction of cells called (%)")+
+  	theme_classic() +
+  	#geom_vline(xintercept = 10) +
+  	#geom_hline(yintercept = 10) +
+    	theme(plot.title = element_text(hjust=0.5, face="bold")) +
+      #guides(fill = "none", color = "none")+
+  	#facet_wrap(~orig.ident)+
+  	ggtitle(title)
+
+
+p
+
+ggsave(filename = title, path = plot_save_dir, plot = p, device = "pdf", scale = 1,
+       width = 15, height = 15, units = "cm", dpi = 300)
+
+
+
+
+
+
+
+```
+
+
+
+
+#Determine where primers bind for mapping 
+
+
+```{r}
+
+#Get Geno_meta
+
+Geno_meta <- cDNA_data_Seurat@assays$Geno_filtered@meta.data
+
+#Load sequences and primers
+
+ref_seqs_df <- read.csv("/Users/dominik.lindenhofer/ownCloud/Shared_project_folder/scDNA-scRNA-seq/20230419_SDR002_Panel_size_testing/9_gDNA_REF-V2/SDR002_gDNA_targets-V2.csv")
+ref_seqs <- DNAStringSet(ref_seqs_df$Sequence)
+names(ref_seqs) <- ref_seqs_df$ID
+
+gDNA_primers_df <- read.csv("REF_lists/SDR002_gDNA_primers.csv") %>% dplyr::select(-Panel) %>% distinct()
+gDNA_primers_df <- gDNA_primers_df %>% mutate(ID = gsub("_", "-", ID))
+gDNA_primers_df <- gDNA_primers_df %>% mutate(ID_prim = str_c(gDNA_primers_df$ID, gDNA_primers_df$Dir, sep = "-"))
+
+CS_overhang <- "GTACTCGCAGTAGTC"
+R2N_overhang <- "GTCTCGTGGGCTCGGAGATGTGTATAAGAGACAG"
+
+#Remove overhang sequences
+
+gDNA_primers_df <- gDNA_primers_df %>% mutate(Sequence = gsub(CS_overhang, "", Sequence))
+gDNA_primers_df <- gDNA_primers_df %>% mutate(Sequence = gsub(R2N_overhang, "", Sequence))
+
+gDNA_primers_df_for <- gDNA_primers_df %>% filter(Dir == "for")
+gDNA_primers_df_rev <- gDNA_primers_df %>% filter(Dir == "rev")
+
+
+gDNA_primers_for <- DNAStringSet(gDNA_primers_df_for$Sequence)
+names(gDNA_primers_for) <- gDNA_primers_df_for$ID_prim
+
+
+gDNA_primers_rev <- DNAStringSet(gDNA_primers_df_rev$Sequence)
+names(gDNA_primers_rev) <- gDNA_primers_df_rev$ID_prim
+gDNA_primers_rev <- reverseComplement(gDNA_primers_rev)
+
+gDNA_primers <- c(gDNA_primers_for, gDNA_primers_rev)
+
+
+#Check if forward always binds in beginning and reverse always at the end
+i=1
+results <- list()
+# Loop over each reference sequence
+for (i in seq_along(ref_seqs)) {
+  
+  ref_seq <- ref_seqs[[i]]  # Get the current reference sequence
+  
+  # Match forward primers and check if they align at the start of the sequence
+  forward_alignment <- matchPDict(gDNA_primers_for, ref_seq)
+  forward_match_positions <- unlist(startIndex(forward_alignment))
+  
+  # Check if any forward primer aligns exactly at the first position of the sequence
+  forward_at_start <- any(forward_match_positions == 1)
+  
+  # Reverse complement the reverse primers for matching
+  reverse_alignment <- matchPDict(gDNA_primers_rev, ref_seq)
+  reverse_match_positions <- unlist(endIndex(reverse_alignment))
+  
+  # Check if any reverse primer aligns exactly at the last position of the sequence
+  reverse_at_end <- any(reverse_match_positions == length(ref_seq))
+  
+  # Store the results (TRUE if both forward and reverse align at correct positions)
+  results[[i]] <- list(
+    forward_aligns_at_start = forward_at_start,
+    reverse_aligns_at_end = reverse_at_end
+  )
+}
+
+
+results_df <- bind_rows(results)
+
+#Is the case for all of them. 
+
+print(unique(results_df$forward_aligns_at_start))
+print(unique(results_df$reverse_aligns_at_end))
+
+
+
+```
+
+
+
+#Adjust to include positions with no variants - and ref seqeuence - and primers bind
+
+
+```{r}
+
+
+file_save_dir <- "/Users/dominik.lindenhofer/ownCloud/Shared_project_folder/Paper_drafts/2022_SDR_Paper/Source_data/Individual_files_all"
+
+
+#Load metadata
+Geno_meta <- cDNA_data_Seurat@assays$Geno_filtered@meta.data
+
+#Get ref_seqs
+ref_seqs <- read.csv("/Users/dominik.lindenhofer/ownCloud/Shared_project_folder/scDNA-scRNA-seq/20230419_SDR002_Panel_size_testing/9_gDNA_REF-V2/SDR002_gDNA_targets-V2.csv")
+ref_seqs <- ref_seqs %>% mutate(ID = gsub("_", "-", ID))
+
+to_plot <- unique(Geno_meta$Amp_ID)
+
+outdir <- "/Users/dominik.lindenhofer/Documents/Data_Local/202307_SDR002/20240920_SDRranger_Analysis_Subset_Subsample-V2_GATK/SDR002_60_60_Comb_Plots_GATK/02_Noise_variants"
+
+i = to_plot[1]
+group_colors_Geno <- c("ALT_count" = "forestgreen", "HET_count" = "cyan2", "REF_count" = "dodgerblue3", "NA_count" = "grey")
+i = "OEG-AMPL778463-pELS"
+
+i = "OEG-AMPL778643-H3K4"
+
+i="NOEG-AMPL777083-dELS"
+
+#Loop over all 
+
+for(i in to_plot){
+Geno_meta_i <- Geno_meta %>% filter(Amp_ID == i)
+start_amp <- unique(Geno_meta_i$Start)
+end_amp <- unique(Geno_meta_i$End)
+start_seq <- unique(Geno_meta_i$Start_seq)
+end_seq <- unique(Geno_meta_i$End_seq)
+chromosome <- unique(Geno_meta_i$X.CHROM)
+
+#Select columns for plotting to reshape
+
+Geno_meta_i_sel <- Geno_meta_i %>% 
+  dplyr::select(ID_Geno, NA_count, REF_count, HET_count, ALT_count)
+
+
+#Select columns for merging later to add positional information 
+
+Geno_meta_POS_i <- Geno_meta_i %>% dplyr::select(ID_Geno, POS, REF, ALT)
+
+
+#Add to both the positions with not called variants 
+
+#Determine most frequent NA count to add to ref seqs
+
+NA_count_REF_2_i <- as.numeric(names(which.max(table(Geno_meta_i_sel$NA_count))))
+REF_count_REF_2_i <- 1-NA_count_REF_2_i
+
+#Get all positions and reference sequence
+all_pos_i <- seq(start_amp, end_amp)
+to_fill_i <- setdiff(all_pos_i, Geno_meta_POS_i$POS)
+
+ref_seq_i <- ref_seqs %>% filter(ID == i)
+ref_seq_i <- as.character(ref_seq_i$Sequence)
+ref_seq_i <- strsplit(ref_seq_i, "")[[1]]
+
+
+#Make dataframe with all positions and counts to add
+to_add_refs_i <- data.frame(POS = all_pos_i, REF = ref_seq_i)
+
+#Filter for the ones that are missing 
+to_add_refs_i <- to_add_refs_i %>% filter(POS %in% to_fill_i)
+
+Geno_meta_i_sel_add <- to_add_refs_i %>% mutate(ID_Geno = str_c(chromosome, POS, REF, sep = "-"), 
+                                          NA_count = NA_count_REF_2_i, 
+                                          REF_count = REF_count_REF_2_i, 
+                                          HET_count = 0,
+                                          ALT_count = 0) %>% 
+                                                dplyr::select(-POS, -REF)
+  
+  
+  
+
+
+Geno_meta_POS_i_add <- to_add_refs_i %>% mutate(ID_Geno = str_c(chromosome, POS, REF, sep = "-"), 
+                                          ALT = REF) %>%
+                                                dplyr::select(ID_Geno, POS, REF, ALT)
+
+
+
+
+#Add to both 
+
+Geno_meta_i_sel <- rbind(Geno_meta_i_sel, Geno_meta_i_sel_add)
+Geno_meta_POS_i <- rbind(Geno_meta_POS_i, Geno_meta_POS_i_add )
+
+
+#Make long for plotting 
+Geno_meta_i_long <- Geno_meta_i_sel %>% 
+  pivot_longer(cols = -ID_Geno, names_to = "Geno", values_to = "frac")
+
+
+
+
+Geno_meta_i_long <- Geno_meta_i_long %>% left_join(Geno_meta_POS_i, by = "ID_Geno")
+
+#Geno_meta_i_long <- Geno_meta_i_long %>% full_join(Geno_meta_POS_i, by = "ID_Geno")
+
+
+#Plot
+
+
+title = paste0(i,"_Variant_noise.pdf")
+title1 = paste0(i,"_Variant_noise_full_range.pdf")
+
+p1 <- Geno_meta_i_long  %>% 
+  	ggplot(
+  	 # aes(x=nReads_gDNA, y=nCells_frac, color=nFeature_gDNA_cut_perc)) + 
+    aes(x=POS, y=frac, color = Geno)) + 
+  	geom_point(size = 2) + 
+  #geom_hline(yintercept = 0.8, linetype='dashed')+
+	#scale_colour_gradient(low = "gray90", high = "#990000", limits = c(0.8,1)) +
+  #xlim(c(0,30))+
+    #ylim(c(0,30))+
+  	#scale_x_log10(limits = c(10,100000)) + 
+  	#scale_y_log10(limits = c(10,100000)) + 
+    scale_y_continuous(limits = c(0,1), labels = scales::percent_format(scale = 100))+
+    labs(x = "Position", y = "Fraction of cells called (%)")+
+    scale_x_continuous(limits = c(start_amp, end_amp))+
+  	theme_classic() +
+     scale_color_manual(values = group_colors_Geno) +
+  	#geom_vline(xintercept = 10) +
+  	geom_vline(xintercept = c(start_seq, end_seq), linetype = "dashed") +
+    	theme(plot.title = element_text(hjust=0.5, face="bold")) +
+      #guides(fill = "none", color = "none")+
+  	#facet_wrap(~orig.ident)+
+  	ggtitle(title1)
+
+
+
+
+title2 = paste0(i,"_Variant_noise_limited_range.pdf")
+
+p2 <- Geno_meta_i_long  %>% 
+  	ggplot(
+  	 # aes(x=nReads_gDNA, y=nCells_frac, color=nFeature_gDNA_cut_perc)) + 
+    aes(x=POS, y=frac, color = Geno)) + 
+  	geom_point(size = 2) + 
+  #geom_hline(yintercept = 0.8, linetype='dashed')+
+	#scale_colour_gradient(low = "gray90", high = "#990000", limits = c(0.8,1)) +
+  #xlim(c(0,30))+
+    #ylim(c(0,30))+
+  	#scale_x_log10(limits = c(10,100000)) + 
+  	#scale_y_log10(limits = c(10,100000)) + 
+    scale_y_continuous(limits = c(0,0.05), labels = scales::percent_format(scale = 100))+
+    labs(x = "Position", y = "Fraction of cells called (%)")+
+    scale_x_continuous(limits = c(start_amp, end_amp))+
+      scale_color_manual(values = group_colors_Geno) +
+  	theme_classic() +
+  	#geom_vline(xintercept = 10) +
+  	geom_vline(xintercept = c(start_seq, end_seq), linetype = "dashed") +
+    	theme(plot.title = element_text(hjust=0.5, face="bold")) +
+      #guides(fill = "none", color = "none")+
+  	#facet_wrap(~orig.ident)+
+  	ggtitle(title2)
+
+
+
+p <- p1+p2
+
+
+ggsave(filename = title, path = outdir, plot = p, device = "pdf", scale = 1,
+       width = 40, height = 15, units = "cm", dpi = 300)
+}
+
+
+p
+
+
+
+to_file <- Geno_meta_i_long %>% dplyr::mutate(Sample = "SDR002_120")
+  
+file_name = "Fig2_S5_h_Noise_example.csv"
+write.csv(to_file, paste0(file_save_dir, "/", file_name), row.names = FALSE) 
+
+
+```
+
+
+
+
+
+#Determine frequency of noise during PCR
+
+
+```{r}
+
+#Load function
+source("/Users/dominik.lindenhofer/ownCloud/Shared_project_folder/Code/R_Functions_SDR_seq_Noise/NoiseCallAmp_V1.R")
+
+
+#Load metadata
+Geno_meta <- cDNA_data_Seurat@assays$Geno_filtered@meta.data
+
+metadata <- cDNA_data_Seurat@meta.data 
+nCells -> length(rownames(metadata))
+
+#Get ref_seqs
+ref_seqs <- read.csv("/Users/dominik.lindenhofer/ownCloud/Shared_project_folder/scDNA-scRNA-seq/20230419_SDR002_Panel_size_testing/9_gDNA_REF-V2/SDR002_gDNA_targets-V2.csv")
+ref_seqs <- ref_seqs %>% mutate(ID = gsub("_", "-", ID))
+
+
+
+outdir <- "/Users/dominik.lindenhofer/Documents/Data_Local/202307_SDR002/20240920_SDRranger_Analysis_Subset_Subsample-V2_GATK/SDR002_60_60_Comb_Plots_GATK/03_Miscalled_variants"
+
+
+results <- NoiseCallAmp(Geno_meta = Geno_meta, 
+                        ref_seqs = ref_seqs, 
+                        outdir = plot_save_dir,
+                        cut_off_Low_Var = 0.05, #To select for low abundant variants - 2 % 
+                        cut_off_High_Var = 0.9) # To remove HET/ALT variants 
+
+
+base_cont_df <- results$base_cont_df
+con_freq_df <- results$con_freq_df
+inde_freq_df <- results$inde_freq_df
+
+#Set colors
+group_colors_Geno <- c("ALT_count" = "forestgreen", "HET_count" = "cyan2", "REF_count" = "dodgerblue3", "NA_count" = "grey")
+
+
+Conversion_group_color <- c("A_C" = "#347928", 
+                            "A_G" = "#FF6600",
+                            "A_T" = "#A594F9", 
+                            "C_A" = "#16325B", 
+                            "C_G" = "#FCCD2A", 
+                            "C_T" = "#6CBEC7", 
+                            
+                            "T_G" = "#C0EBA6", 
+                            "T_C" = "#FF885B",
+                            "T_A" = "#CDC1FF", 
+                            "G_T" = "#227B94", 
+                            "G_C" = "#FFEB55", 
+                            "G_A" = "#81DAE3")
+
+Conversion_code_group_color <- c("A_C / T_G" = "#347928",
+                                 "A_G / T_C" = "#FF6600",
+                                 "A_T / T_A" = "#A594F9", 
+                                 "C_A / G_T" = "#16325B",  
+                                 "C_G / G_C" = "#FCCD2A", 
+                                 "C_T / G_A" = "#6CBEC7")          
+
+#_____________________________________________________
+#For base_cont_plots
+
+#Check base freqeunceis 
+base_cont_df_sum <- base_cont_df %>% group_by(REF) %>% summarize(base_count = sum(base_count)) %>% 
+                                    mutate(base_sum = sum(base_count)) %>%
+                                    mutate(base_freq = base_count/base_sum)
+
+
+
+title =  "Base_cont_df_sum.pdf"
+
+p <- base_cont_df_sum   %>% 
+  	ggplot(aes(x=factor(REF, levels = unique(REF)), y = base_freq, fill = REF)) + 
+  	geom_bar(stat = "identity") +
+  	theme_classic() +
+  	theme(axis.text.x = element_text(angle = 45, vjust = 1, hjust=1)) +
+    #scale_y_continuous(limits = c(0,10000))+
+   scale_y_continuous(labels = scales::percent_format(scale = 100))+
+  	theme(plot.title = element_text(hjust=0.5, face="bold")) +
+  	ggtitle(title)+
+    labs(x = "Base", y = "Fraction (%)")+
+    #scale_fill_manual(values = group_colors)+
+    guides(fill = "none")
+
+p
+
+ggsave(filename = title, path = plot_save_dir, plot = p, device = "pdf", scale = 1,
+       width = 15, height = 15, units = "cm", dpi = 300)
+
+
+base_tot <- unique(base_cont_df_sum$base_sum)
+
+
+#_____________________________________________________
+#For con_freq_plots
+
+#Make summary of con miscalled over all amplicons
+
+con_freq_df_sum <- con_freq_df %>% group_by(Conversion) %>% summarize(frac = sum(frac),
+                                                                  count_POS = sum(count_POS),
+                                                                 nCells_Con = sum(nCells_Con))
+
+
+#Group the same conversions
+Conversion_code <- data.frame(Conversion = c("A_C", "A_G", "A_T", "C_A", "C_G", "C_T", "T_G", "T_C", "T_A", "G_T", "G_C", "G_A"),
+                              Group = c("A_C / T_G", "A_G / T_C", "A_T / T_A", "C_A / G_T", "C_G / G_C", "C_T / G_A",
+                                        "A_C / T_G", "A_G / T_C", "A_T / T_A", "C_A / G_T", "C_G / G_C", "C_T / G_A"))
+                          
+
+con_freq_df_sum <- con_freq_df_sum %>% left_join(Conversion_code, by = "Conversion")
+
+
+#Normalize to bases found
+
+con_freq_df_sum <- con_freq_df_sum %>%
+  mutate(REF = map_chr(str_split(Conversion, "_"), 1),
+         ALT = map_chr(str_split(Conversion, "_"), 2) )
+con_freq_df_sum <- con_freq_df_sum %>% left_join(base_cont_df_sum, by = "REF")
+
+
+
+con_freq_df_sum <- con_freq_df_sum %>% mutate(frac_base = frac/base_count, # Here also normalized per cell
+                                              count_POS_base = count_POS/base_count,
+                                              nCells_Con_base = nCells_Con/base_count)
+
+
+con_freq_df_sum <- con_freq_df_sum %>% mutate(frac_base_test = nCells_Con_base/nCells)
+#Is fraction summed correctly 
+all.equal(con_freq_df_sum$frac_base,con_freq_df_sum$frac_base_test)
+
+#Normalize to panel size
+con_freq_df_sum <- con_freq_df_sum %>% mutate(frac_panel = frac/panel,
+                                              count_POS_panel = count_POS/panel,
+                                              nCells_Con_panel = nCells_Con/panel)
+
+
+
+
+title =  "Conversion_freq.pdf"
+
+p <- con_freq_df_sum   %>% 
+  	ggplot(aes(x=factor(Group, levels = unique(Group)), y = frac_base, fill = Conversion)) + 
+  	geom_bar(stat = "identity") +
+  	theme_classic() +
+  	theme(axis.text.x = element_text(angle = 45, vjust = 1, hjust=1)) +
+    #scale_y_continuous(limits = c(0,10000))+
+   scale_y_continuous(labels = scales::percent_format(scale = 100))+
+  	theme(plot.title = element_text(hjust=0.5, face="bold")) +
+  	ggtitle(title)+
+    labs(x = "Conversion", y = "norm. frequency (%)")+
+    scale_fill_manual(values = Conversion_group_color)+
+    guides(fill = "none")
+
+p
+
+ggsave(filename = title, path = plot_save_dir, plot = p, device = "pdf", scale = 1,
+       width = 15, height = 15, units = "cm", dpi = 300)
+
+
+con_freq_df_sum_sum <-  con_freq_df_sum %>% 
+    group_by(Group) %>% 
+  summarize(frac_base = sum(frac_base),
+            nCells_Con_base = sum(nCells_Con_base),
+            count_POS_base = sum(count_POS_base)/2)
+
+max_freq <- max(con_freq_df_sum_sum$frac_base)
+max_Con <- max(con_freq_df_sum_sum$nCells_Con_base)  
+max_POS <- max(con_freq_df_sum_sum$count_POS_base)
+      
+
+title = "Conversion_freq_count.pdf"
+
+p <-  con_freq_df_sum_sum   %>% 
+  	ggplot(
+    aes(x=count_POS_base, y=frac_base,  color = Group)) + 
+  	geom_point(size = 3) + 
+  #geom_hline(yintercept = 0.8, linetype='dashed')+
+#	scale_colour_gradient(low = "gray90", high = "#990000", limits = c(0.8,1)) +
+  #xlim(c(0,30))+
+    #ylim(c(0,30))+
+  	#scale_x_log10(limits = c(10,100000)) + 
+  	#scale_y_log10(limits = c(10,100000)) + 
+      scale_x_continuous(limits = c(0, max_POS), labels = scales::percent_format(scale = 100))+
+      scale_y_continuous(limits = c(0, max_freq), labels = scales::percent_format(scale = 100))+
+  	theme_classic() +
+  	#geom_vline(xintercept = 10) +
+  	#geom_hline(yintercept = 10) +
+    labs(x = "Fraction of bases occuring at", y = "norm. frequency (%)")+
+    	theme(plot.title = element_text(hjust=0.5, face="bold")) +
+      scale_color_manual(values = Conversion_code_group_color)+
+      #guides(fill = "none", color = "none")+
+  	#facet_wrap(~orig.ident)+
+  	ggtitle(title)
+
+
+p
+
+ggsave(filename = title, path = plot_save_dir, plot = p, device = "pdf", scale = 1,
+       width = 15, height = 15, units = "cm", dpi = 300)
+
+
+
+#_______________________
+#Make similar plots for indels
+
+
+inde_freq_df_sum <- inde_freq_df %>% group_by(Conversion) %>% summarize(frac = sum(frac),
+                                                                  count_POS = sum(count_POS),
+                                                                 nCells_Con = sum(nCells_Con))
+
+#Normalize to bases assayed in panel 
+
+inde_freq_df_sum <- inde_freq_df_sum %>% mutate(base_sum = base_tot) %>%
+                                        mutate(frac_base = frac/base_sum,
+                                               count_POS_base = count_POS/base_sum,
+                                               nCells_Con_base = nCells_Con/base_sum)
+
+
+
+  
+#Normalize to panel 
+
+inde_freq_df_sum <- inde_freq_df_sum  %>% mutate(frac_panel = frac/panel,
+                                              count_POS_panel = count_POS/panel,
+                                              nCells_Con_panel = nCells_Con/panel)
+
+
+
+
+
+
+
+
+#filter for frequent ones
+
+cut_off_inde <- 0.01
+
+inde_freq_df_sum <- inde_freq_df_sum %>% filter(nCells_Con_base > cut_off_inde)
+
+
+
+title =  "Inde_freq.pdf"
+
+p <- inde_freq_df_sum   %>% 
+  	ggplot(aes(x=factor(Conversion, levels = unique(Conversion)), y = frac_base, fill = Conversion)) + 
+  	geom_bar(stat = "identity") +
+  	theme_classic() +
+  	theme(axis.text.x = element_text(angle = 45, vjust = 1, hjust=1)) +
+    #scale_y_continuous(limits = c(0,10000))+
+     scale_y_continuous(labels = scales::percent_format(scale = 100))+
+  	theme(plot.title = element_text(hjust=0.5, face="bold")) +
+  	ggtitle(title)+
+    labs(x = "Conversion", y = "Frequency (normalized)")+
+    #scale_fill_manual(values = group_colors)+
+    guides(fill = "none")
+
+p
+
+ggsave(filename = title, path = plot_save_dir, plot = p, device = "pdf", scale = 1,
+       width = 15, height = 15, units = "cm", dpi = 300)
+
+
+max_freq <- max(inde_freq_df_sum$frac_base)  
+max_Con <- max(inde_freq_df_sum$nCells_Con_base)  
+max_POS <- max(inde_freq_df_sum$count_POS_base)
+      
+
+title = "Inde_freq_count.pdf"
+
+p <-  inde_freq_df_sum   %>% 
+  	ggplot(
+    aes(x=count_POS_base, y=frac_base,  color = Conversion)) + 
+  	geom_point(size = 3) + 
+  #geom_hline(yintercept = 0.8, linetype='dashed')+
+#	scale_colour_gradient(low = "gray90", high = "#990000", limits = c(0.8,1)) +
+  #xlim(c(0,30))+
+    #ylim(c(0,30))+
+  	#scale_x_log10(limits = c(10,100000)) + 
+  	#scale_y_log10(limits = c(10,100000)) + 
+      scale_x_continuous(limits = c(0, max_POS), labels = scales::percent_format(scale = 100))+
+      scale_y_continuous(limits = c(0, max_freq), labels = scales::percent_format(scale = 100))+
+  	theme_classic() +
+  	#geom_vline(xintercept = 10) +
+  	#geom_hline(yintercept = 10) +
+    labs(x = "Fraction of bases occuring at", y = "Frequency (normalized)")+
+    	theme(plot.title = element_text(hjust=0.5, face="bold")) +
+      #guides(fill = "none", color = "none")+
+  	#facet_wrap(~orig.ident)+
+  	ggtitle(title)
+
+
+p
+
+ggsave(filename = title, path = plot_save_dir, plot = p, device = "pdf", scale = 1,
+       width = 15, height = 15, units = "cm", dpi = 300)
+
+
+
+#Inde by size of deletion insertion
+
+inde_freq_df_sum <- inde_freq_df %>% group_by(Size) %>% summarize(frac = sum(frac),
+                                                                  count_POS = sum(count_POS),
+                                                                 nCells_Con = sum(nCells_Con))
+
+
+
+#Normalize to bases assayed in panel 
+
+inde_freq_df_sum <- inde_freq_df_sum %>% mutate(base_sum = base_tot) %>%
+                                        mutate(frac_base = frac/base_sum,
+                                               count_POS_base = count_POS/base_sum,
+                                               nCells_Con_base = nCells_Con/base_sum)
+
+#Normalize to panel size
+inde_freq_df_sum <- inde_freq_df_sum  %>% mutate(frac_panel = frac/panel,
+                                              count_POS_panel = count_POS/panel,
+                                              nCells_Con_panel = nCells_Con/panel)
+
+#filter for frequent ones
+
+#cut_off_inde <- 0.0000005
+
+#inde_freq_df_sum <- inde_freq_df_sum %>% filter(frac_base > cut_off_inde)
+
+
+
+title =  "Inde_freq_by_del.pdf"
+
+p <- inde_freq_df_sum   %>% 
+  	ggplot(aes(x=factor(Size, levels = unique(Size)), y = frac_base, fill = Size)) + 
+  	geom_bar(stat = "identity") +
+  	theme_classic() +
+  	theme(axis.text.x = element_text(angle = 45, vjust = 1, hjust=1)) +
+    #scale_y_continuous(limits = c(0,10000))+
+     scale_y_continuous(labels = scales::percent_format(scale = 100))+
+  	theme(plot.title = element_text(hjust=0.5, face="bold")) +
+  	ggtitle(title)+
+    labs(x = "Conversion", y = "Frequency (normalized)")+
+    #scale_fill_manual(values = group_colors)+
+    guides(fill = "none")
+
+p
+
+ggsave(filename = title, path = plot_save_dir, plot = p, device = "pdf", scale = 1,
+       width = 15, height = 15, units = "cm", dpi = 300)
+
+
+max_freq <- max(inde_freq_df_sum$frac_base)  
+max_Con <- max(inde_freq_df_sum$nCells_Con_base)  
+max_POS <- max(inde_freq_df_sum$count_POS_base)
+      
+
+title = "Inde_freq_count_by_del.pdf"
+
+p <-  inde_freq_df_sum   %>% 
+  	ggplot(
+    aes(x=count_POS_base, y=frac_base,  color = Size)) + 
+  	geom_point(size = 3) + 
+  #geom_hline(yintercept = 0.8, linetype='dashed')+
+	scale_colour_gradient2(low = "blue4" , mid = "gray90", high = "#990000") +
+  #xlim(c(0,30))+
+    #ylim(c(0,30))+
+  	#scale_x_log10(limits = c(10,100000)) + 
+  	#scale_y_log10(limits = c(10,100000)) + 
+      scale_x_continuous(limits = c(0, max_POS), labels = scales::percent_format(scale = 100))+
+      scale_y_continuous(limits = c(0, max_freq), labels = scales::percent_format(scale = 100))+
+  	theme_classic() +
+  	#geom_vline(xintercept = 10) +
+  	#geom_hline(yintercept = 10) +
+    labs(x = "Fraction of bases occuring at", y = "Frequency (normalized)")+
+    	theme(plot.title = element_text(hjust=0.5, face="bold")) +
+      #guides(fill = "none", color = "none")+
+  	#facet_wrap(~orig.ident)+
+  	ggtitle(title)
+
+
+p
+
+ggsave(filename = title, path = plot_save_dir, plot = p, device = "pdf", scale = 1,
+       width = 15, height = 15, units = "cm", dpi = 300)
+
+
+
+
+```
+
+
+
+
+
+
+
+

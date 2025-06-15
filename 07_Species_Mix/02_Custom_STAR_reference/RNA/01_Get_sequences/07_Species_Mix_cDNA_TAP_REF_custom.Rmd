@@ -1,0 +1,466 @@
+---
+title: "20231130_cDNA_custom_REF_3end"
+author: "Dominik Lindenhofer"
+date: "2023-11-30"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+#Load libraries
+```{r}
+
+library(rtracklayer)
+library(GenomicRanges)
+library(dplyr)
+
+library(readxl)
+
+
+Sys.setenv(PATH = paste("/Users/dominik.lindenhofer/opt/miniconda3/bin", Sys.getenv("PATH"), sep = ":"))
+Sys.setenv(PATH = paste("/Users/dominik.lindenhofer/Packages/mosaic/mosaic/bin", Sys.getenv("PATH"), sep = ":"))
+
+
+#Load Blastn
+Sys.setenv(PATH = paste("/Users/dominik.lindenhofer/ncbi-blast-2.13.0+/bin", Sys.getenv("PATH"), sep = ":"))
+
+library(TAPseq)
+
+```
+
+
+
+#for cDNA
+
+#Load data
+
+
+```{r}
+
+#For human
+SDR009_TAP_human <- read_excel("POP_human_primers.xlsx", sheet = 1)
+
+SDR009_TAP_human <- SDR009_TAP_human[,1:19]
+
+SDR009_TAP_human <- SDR009_TAP_human %>% mutate(Species = "Human")
+
+cDNA_annotate_human <- read.delim("ipsc_inner_primers.bed", header = FALSE) %>% dplyr::slice(-1)
+colnames(cDNA_annotate_human) <- c("seq_id", "start", "end", "name", "score", "strand", "thickStart", "thickEnd", "itemRgb", "blockCount", "blockSizes", "blockStarts")
+
+
+SDR009_TAP_human <- SDR009_TAP_human %>% left_join(cDNA_annotate_human, by = c("primer_id" = "name"))
+
+
+#For mouse
+SDR009_TAP_mouse <-  read_excel("07_Species_Mix_3T3_best_inner_primers_mod.xlsx") %>% filter(Use == "yes")
+ 
+
+SDR009_TAP_mouse <- SDR009_TAP_mouse[,1:19] 
+
+SDR009_TAP_mouse <- SDR009_TAP_mouse %>% mutate(Species = "Mouse")
+
+
+#Load bed files used and combine
+
+cDNA_annotate_mouse <- read.delim("07_Species_Mix_inner_primers.bed", header = FALSE) %>% dplyr::slice(-1)
+colnames(cDNA_annotate_mouse) <- c("seq_id", "start", "end", "name", "score", "strand", "thickStart", "thickEnd", "itemRgb", "blockCount", "blockSizes", "blockStarts")
+
+SDR009_TAP_mouse <- SDR009_TAP_mouse %>% left_join(cDNA_annotate_mouse, by = c("primer_id" = "name"))
+
+
+
+
+#Combine
+
+SDR009_TAP <- rbind(SDR009_TAP_human, SDR009_TAP_mouse)
+
+
+write.table(SDR009_TAP, file="07_Species_Mix_TAP_chromosomal_loc_add.txt", quote = FALSE, row.names = FALSE, col.names = TRUE, sep = "\t")
+
+```
+
+
+#REMARK
+Cross reactivity of primers - Take entire transcript and build reference around it for both human and mouse genes always
+
+#For human
+
+```{r}
+
+#Load GTF
+GTF_data_frame <- rtracklayer::import("/Users/dominik.lindenhofer/Documents/Data_Local/SDR_REFs/gencode.v41.annotation.gtf.gz") %>% as.data.frame() %>% tibble::as_tibble() 
+
+#Only select relevant columns
+
+GTF_data_frame <- GTF_data_frame %>% dplyr::select(seqnames, start, end, width, strand, type, gene_name) %>% distinct()
+
+#Load data for filtering - manually removed duplicates
+
+SDR009_TAP <- read.delim(file="07_Species_Mix_TAP_chromosomal_loc_add.txt") 
+
+
+cDNA_targets <- SDR009_TAP %>% dplyr::select(ID = "seq_id.x", Chromosome = "seq_id.y", Start = "start.y", End = "end.y")
+cDNA_targets <- cDNA_targets %>% filter(!is.na(Chromosome))
+
+
+#Loop to filter out start and end of each annotation site
+
+
+cDNA_targets_coord <- data.frame(ID = character(), Chromosome = character(), Start = numeric(), End = numeric())
+
+for(i in unique(cDNA_targets$ID)){
+  
+  tryCatch({
+    # Filter cDNA target
+    cDNA_targets_i <- cDNA_targets %>% filter(ID == i)
+    
+    # Convert gene name to uppercase
+    gene_i <- toupper(i)
+    
+    # Get matching GTF entries
+    GTF_i <- GTF_data_frame %>% filter(gene_name == gene_i & type == "gene")
+    
+    # Check if GTF_i is empty
+    if(nrow(GTF_i) == 0){
+      warning(paste("No match found for", gene_i))
+      next  # Skip this iteration
+    }
+    
+    # Extract coordinates
+    chr_i <- unique(GTF_i$seqnames)
+    start_i <- min(GTF_i$start, na.rm = TRUE)
+    end_i <- max(GTF_i$end, na.rm = TRUE)
+    
+    # Ensure the chromosome information is not empty
+    if(length(chr_i) == 0) {
+      warning(paste("Empty chromosome for", gene_i))
+      next
+    }
+    
+    # Write into new dataframe
+    cDNA_targets_coord_add <- data.frame(ID = gene_i, Chromosome = chr_i, Start = start_i, End = end_i)
+    cDNA_targets_coord <- rbind(cDNA_targets_coord, cDNA_targets_coord_add)
+    
+  }, error = function(e) {
+    message(paste("Error in processing:", i, " - ", e$message))
+  })
+}
+
+
+
+
+#Manually add the ones that give an error
+
+
+to_add_filter <- data.frame(ID = c("FTL", "ZNF207", "ZNF579"))
+
+
+for(i in unique(to_add_filter$ID)){
+  
+  tryCatch({
+    # Filter cDNA target
+    cDNA_targets_i <- cDNA_targets %>% filter(ID == i)
+    
+    # Convert gene name to uppercase
+    gene_i <- toupper(i)
+    
+    # Get matching GTF entries
+    GTF_i <- GTF_data_frame %>% filter(gene_name == gene_i & type == "gene")
+    
+    # Check if GTF_i is empty
+    if(nrow(GTF_i) == 0){
+      warning(paste("No match found for", gene_i))
+      next  # Skip this iteration
+    }
+    
+    # Extract coordinates
+    chr_i <- unique(GTF_i$seqnames)
+    start_i <- min(GTF_i$start, na.rm = TRUE)
+    end_i <- max(GTF_i$end, na.rm = TRUE)
+    
+    # Ensure the chromosome information is not empty
+    if(length(chr_i) == 0) {
+      warning(paste("Empty chromosome for", gene_i))
+      next
+    }
+    
+    # Write into new dataframe
+    cDNA_targets_coord_add <- data.frame(ID = gene_i, Chromosome = chr_i, Start = start_i, End = end_i)
+    cDNA_targets_coord <- rbind(cDNA_targets_coord, cDNA_targets_coord_add)
+    
+  }, error = function(e) {
+    message(paste("Error in processing:", i, " - ", e$message))
+  })
+}
+
+
+cDNA_targets_coord$Width <- cDNA_targets_coord$End - cDNA_targets_coord$Start +1
+cDNA_targets_coord <- cDNA_targets_coord %>% dplyr::select(-"Width")
+
+cDNA_targets_coord_gr <- makeGRangesFromDataFrame(cDNA_targets_coord, keep.extra.columns = TRUE)
+
+
+export(cDNA_targets_coord_gr, "SDR009_cDNA_TAP_REF_coord_human.bed", "bed")
+
+
+```
+
+
+
+#Check if there are any overlapping genes to each other - change if necessary
+
+```{r}
+
+
+cDNA_targets_gr_1 <- makeGRangesFromDataFrame(cDNA_targets_coord, keep.extra.columns = TRUE)
+cDNA_targets_gr_2 <- makeGRangesFromDataFrame(cDNA_targets_coord, keep.extra.columns = TRUE)
+
+
+
+Overlap <- countOverlaps(cDNA_targets_gr_1, cDNA_targets_gr_2)
+cDNA_targets_gr_1$count_overlaps <- Overlap
+cDNA_targets_df_1 <- as.data.frame(cDNA_targets_gr_1)
+
+
+write.table(cDNA_targets_coord, file="07_Species_Mix_cDNA_TAP_REF_human.tsv", quote = FALSE, row.names = FALSE, col.names = TRUE, sep = "\t")
+
+
+```
+
+
+
+#Get reference sequence
+
+
+```{r}
+
+
+library(BSgenome)
+library(Biostrings)
+library(dplyr)
+library(GenomicRanges)
+
+
+# human genome BSgenome object (needs to be istalled from Bioconductor)
+hg38 <- getBSgenome("BSgenome.Hsapiens.UCSC.hg38")
+
+
+cDNA_targets <- read.delim("07_Species_Mix_cDNA_TAP_REF_human.tsv")
+
+cDNA_targets_seq <- data.frame()
+
+for (i in unique(cDNA_targets$ID)){
+  cDNA_targets_i <- cDNA_targets %>% dplyr::filter(cDNA_targets$ID == i)
+  cDNA_targets_dna_i <- as.character(Biostrings::getSeq(hg38, cDNA_targets_i$Chromosome, cDNA_targets_i$Start,	cDNA_targets_i$End))
+  cDNA_targets_dna_i_df <- data.frame(ID = i, Chromosome = cDNA_targets_i$Chromosome, Start = cDNA_targets_i$Start, End = cDNA_targets_i$End,  Sequence = cDNA_targets_dna_i)
+  cDNA_targets_seq <- rbind(cDNA_targets_seq, cDNA_targets_dna_i_df)
+}
+
+cDNA_targets_seq <- cDNA_targets_seq %>% dplyr::select(ID, Sequence)
+
+write.csv(cDNA_targets_seq, file = "07_Species_Mix_cDNA_TAP_REF_seqs_human.csv", quote = FALSE, row.names = FALSE, col.names = TRUE)
+
+test <- read.csv("07_Species_Mix_cDNA_TAP_REF_seqs_human.csv")
+
+```
+
+
+
+
+
+
+
+#__________________
+
+#For mouse
+
+
+
+```{r}
+
+
+#Load GTF
+GTF_data_frame <- rtracklayer::import("/Users/dominik.lindenhofer/Documents/Data_Local/TAP_seq_gencode.vM25/gencode.vM25.annotation.gtf.gz") %>% as.data.frame() %>% tibble::as_tibble() 
+
+#Only select relevant columns
+
+GTF_data_frame <- GTF_data_frame %>% dplyr::select(seqnames, start, end, width, strand, type, gene_name) %>% distinct()
+
+#Load data for filtering - manually removed duplicates
+
+SDR009_TAP <- read.delim(file="07_Species_Mix_TAP_chromosomal_loc_add.txt") 
+
+
+cDNA_targets <- SDR009_TAP %>% dplyr::select(ID = "seq_id.x", Chromosome = "seq_id.y", Start = "start.y", End = "end.y")
+cDNA_targets <- cDNA_targets %>% filter(!is.na(Chromosome))
+
+
+#Loop to filter out start and end of each annotation site
+
+cDNA_targets_coord <- data.frame()
+
+i = cDNA_targets$ID[1]
+
+
+cDNA_targets_coord <- data.frame(ID = character(), Chromosome = character(), Start = numeric(), End = numeric())
+
+for(i in unique(cDNA_targets$ID)){
+  
+  tryCatch({
+    # Filter cDNA target
+    cDNA_targets_i <- cDNA_targets %>% filter(ID == i)
+    
+    # Convert gene name to uppercase
+    gene_i <- paste0(toupper(substr(i, 1, 1)), tolower(substr(i, 2, nchar(i))))
+    
+    # Get matching GTF entries
+    GTF_i <- GTF_data_frame %>% filter(gene_name == gene_i & type == "gene")
+    
+    # Check if GTF_i is empty
+    if(nrow(GTF_i) == 0){
+      warning(paste("No match found for", gene_i))
+      next  # Skip this iteration
+    }
+    
+    # Extract coordinates
+    chr_i <- unique(GTF_i$seqnames)
+    start_i <- min(GTF_i$start, na.rm = TRUE)
+    end_i <- max(GTF_i$end, na.rm = TRUE)
+    
+    # Ensure the chromosome information is not empty
+    if(length(chr_i) == 0) {
+      warning(paste("Empty chromosome for", gene_i))
+      next
+    }
+    
+    # Write into new dataframe
+    cDNA_targets_coord_add <- data.frame(ID = gene_i, Chromosome = chr_i, Start = start_i, End = end_i)
+    cDNA_targets_coord <- rbind(cDNA_targets_coord, cDNA_targets_coord_add)
+    
+  }, error = function(e) {
+    message(paste("Error in processing:", i, " - ", e$message))
+  })
+}
+
+
+
+cDNA_targets_coord$Width <- cDNA_targets_coord$End - cDNA_targets_coord$Start +1
+cDNA_targets_coord <- cDNA_targets_coord %>% dplyr::select(-"Width")
+
+cDNA_targets_coord_gr <- makeGRangesFromDataFrame(cDNA_targets_coord, keep.extra.columns = TRUE)
+
+
+export(cDNA_targets_coord_gr, "07_Species_Mix_cDNA_TAP_REF_coord_mouse.bed", "bed")
+
+```
+
+
+
+
+
+#Check if there are any overlapping genes to each other - change if necessary
+
+```{r}
+
+
+cDNA_targets_gr_1 <- makeGRangesFromDataFrame(cDNA_targets_coord, keep.extra.columns = TRUE)
+cDNA_targets_gr_2 <- makeGRangesFromDataFrame(cDNA_targets_coord, keep.extra.columns = TRUE)
+
+
+
+Overlap <- countOverlaps(cDNA_targets_gr_1, cDNA_targets_gr_2)
+cDNA_targets_gr_1$count_overlaps <- Overlap
+cDNA_targets_df_1 <- as.data.frame(cDNA_targets_gr_1)
+
+
+
+#REMARK - manually change PSME1 and EMC9 reference - they overlap
+
+#cDNA_targets_coord <- cDNA_targets_coord %>% mutate(End = case_when(ID == "PSME1" ~ 24138962, TRUE ~ End))
+#cDNA_targets_coord$Start <- as.integer(cDNA_targets_coord$Start)
+#cDNA_targets_coord$End <- as.integer(cDNA_targets_coord$End)
+#cDNA_targets_coord_gr <- makeGRangesFromDataFrame(cDNA_targets_coord, keep.extra.columns = TRUE)
+
+
+write.table(cDNA_targets_coord, file="07_Species_Mix_cDNA_TAP_REF_mouse.tsv", quote = FALSE, row.names = FALSE, col.names = TRUE, sep = "\t")
+
+
+```
+
+
+
+
+
+#Get reference sequence
+
+
+```{r}
+
+
+library(BSgenome)
+library(Biostrings)
+library(dplyr)
+library(GenomicRanges)
+
+
+# human genome BSgenome object (needs to be istalled from Bioconductor)
+mm10 <- getBSgenome("BSgenome.Mmusculus.UCSC.mm10")
+
+
+cDNA_targets <- read.delim("07_Species_Mix_cDNA_TAP_REF_mouse.tsv")
+
+cDNA_targets_seq <- data.frame()
+
+for (i in unique(cDNA_targets$ID)){
+  cDNA_targets_i <- cDNA_targets %>% dplyr::filter(cDNA_targets$ID == i)
+  cDNA_targets_dna_i <- as.character(Biostrings::getSeq(mm10, cDNA_targets_i$Chromosome, cDNA_targets_i$Start,	cDNA_targets_i$End))
+  cDNA_targets_dna_i_df <- data.frame(ID = i, Chromosome = cDNA_targets_i$Chromosome, Start = cDNA_targets_i$Start, End = cDNA_targets_i$End,  Sequence = cDNA_targets_dna_i)
+  cDNA_targets_seq <- rbind(cDNA_targets_seq, cDNA_targets_dna_i_df)
+}
+
+cDNA_targets_seq <- cDNA_targets_seq %>% dplyr::select(ID, Sequence)
+
+write.csv(cDNA_targets_seq, file = "07_Species_Mix_cDNA_TAP_REF_seqs_mouse.csv", quote = FALSE, row.names = FALSE, col.names = TRUE)
+
+test <- read.csv("07_Species_Mix_cDNA_TAP_REF_seqs_mouse.csv")
+
+```
+
+
+
+
+#Combine
+
+
+```{r}
+
+cDNA_targets_seq_H <- read.csv("07_Species_Mix_cDNA_TAP_REF_seqs_human.csv")
+
+cDNA_targets_seq_M <- read.csv("07_Species_Mix_cDNA_TAP_REF_seqs_mouse.csv")
+
+
+cDNA_targets_seq_H$ID <- paste0(cDNA_targets_seq_H$ID, "_Human")
+
+cDNA_targets_seq_M$ID <- paste0(cDNA_targets_seq_M$ID, "_Mouse")
+
+
+#Combine
+
+
+cDNA_targets_seq <- rbind(cDNA_targets_seq_H, cDNA_targets_seq_M)
+
+write.csv(cDNA_targets_seq, file = "07_Species_Mix_cDNA_TAP_REF_seqs_comb.csv", quote = FALSE, row.names = FALSE, col.names = TRUE)
+
+
+
+
+```
+
+
+
+
+
+
+

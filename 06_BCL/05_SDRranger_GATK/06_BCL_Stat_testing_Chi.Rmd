@@ -1,0 +1,997 @@
+---
+title: "20240423_SDR005_Stat_testing"
+output: html_document
+date: "2024-04-23"
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+#Load libraries
+
+
+```{r}
+
+library(Seurat)
+library(dplyr)
+library(ggplot2)
+library(Matrix)
+library(reshape2)
+library(data.table)
+library(stringr)
+library(tidyr)
+library(scales)
+library(rtracklayer)
+library(data.table)
+library(readr)
+
+
+
+```
+
+## Load data
+
+
+
+```{r}
+
+#Load in Donnachas data for annotation
+
+cDNA_data_Seurat <- readRDS("SDR005_Combined_Geno_full_clustered.rds")
+metadata <- cDNA_data_Seurat@meta.data
+
+
+
+```
+
+#Set variants for testing
+
+```{r}
+#Filter variants from above
+
+
+Geno_meta <- cDNA_data_Seurat@assays$Geno_filtered@meta.data
+
+#Prefilter for abundance
+Freq_cut_off <- 0.005
+
+Geno_meta <- Geno_meta %>% filter(HET_count_FL7 > Freq_cut_off | 
+                                         HET_count_FL11 > Freq_cut_off |  
+                                         HET_count_GCB4 > Freq_cut_off | 
+                                         ALT_count_FL7 > Freq_cut_off | 
+                                         ALT_count_FL11 > Freq_cut_off |  
+                                         ALT_count_GCB4 > Freq_cut_off )
+
+#First apply filter for ones with low prob to overlap
+
+Geno_meta_filter_low <- Geno_meta %>% filter(Short_prob == "low")
+Geno_meta_filter_low <- Geno_meta_filter_low %>% filter(VAF_HET_avg_FL7 > 0.25 |
+                                                        VAF_HET_avg_FL11 > 0.25 |
+                                                        VAF_HET_avg_GCB4 > 0.25 )
+
+Freq_cut_off_h <- 0.05
+
+#Second apply filter for ones with high prob to overlap
+
+Geno_meta_filter_high <- Geno_meta %>% filter(Short_prob == "high")
+Geno_meta_filter_high <- Geno_meta_filter_high %>% filter(HET_count_FL7 > Freq_cut_off_h | 
+                                                          HET_count_FL11 > Freq_cut_off_h |  
+                                                          HET_count_GCB4 > Freq_cut_off_h | 
+                                                          ALT_count_FL7 > Freq_cut_off_h | 
+                                                          ALT_count_FL11 > Freq_cut_off_h |  
+                                                          ALT_count_GCB4 > Freq_cut_off_h )
+
+Geno_meta_filter <- rbind(Geno_meta_filter_low, Geno_meta_filter_high)
+
+
+#For highly covered amplicons
+Geno_meta_filter_H <- Geno_meta_filter %>% filter(nCells_frac_Run1 > 0.5  &  nCells_frac_Run2 > 0.5)
+                                                 
+rownames(Geno_meta_filter_H) <- Geno_meta_filter_H$ID_Geno
+
+#Sort matrix for highly confindent variants
+
+to_filter_Geno <- Geno_meta_filter_H$ID_Geno
+
+
+test_var <- to_filter_Geno
+
+
+```
+
+#FL7
+
+# Chi-square - Find variable mutations between clusters
+
+
+```{r}
+#Load data
+
+cDNA_data_Seurat <- readRDS("SDR005_Combined_Geno_full_clustered.rds")
+metadata <- cDNA_data_Seurat@meta.data
+
+#Split Seurat by sample
+
+Idents(object = cDNA_data_Seurat) <- "Tumor_ID"
+table(Idents(cDNA_data_Seurat))
+cDNA_data_Seurat_split <- SplitObject(cDNA_data_Seurat, split.by = "ident")
+
+
+#Run for FL7 with Cell Types
+#For FL7
+
+#Split seurat by state
+Idents(object = cDNA_data_Seurat_split$FL7) <- "CellTypes"
+table(Idents(cDNA_data_Seurat_split$FL7))
+cDNA_data_Seurat_split_FL7 <- SplitObject(cDNA_data_Seurat_split$FL7, split.by = "ident")
+
+
+
+#Make table of all combinations of State for plotting 
+to_loop <- data.frame(State = unique(metadata$CellTypes))
+
+#Generate all combinations
+to_loop_exp <- expand.grid(State1 = to_loop$State, State2 = to_loop$State)
+to_loop_exp <- subset(to_loop_exp, State1 != State2) 
+to_loop_exp$State1 <- as.character(to_loop_exp$State1)
+to_loop_exp$State2 <- as.character(to_loop_exp$State2)
+to_loop_exp <- subset(to_loop_exp, State1 < State2)
+#to_loop_exp <- to_loop_exp %>%  mutate(index = 1:nrow(to_loop_exp))
+
+
+
+#To Chisquare testing - with multiple error correction
+
+#Empty dataframe for loop
+Chi_FL7 <- data.frame()
+
+#For filling missing values
+required_values <- 0:2 #Keep this line
+
+#Set variants for loop
+#test_var <- rownames(cDNA_data_Seurat_split_FL7$LZ@assays$Geno_filtered)
+
+i=1
+State1 = "LZ"
+State2 = "DZ"
+x="BCL2-chr18-63321414-A-G-upstream:gene:variant"
+x = test_var[1]
+
+for (i in 1:nrow(to_loop_exp)) {
+  tryCatch({
+row_i <- to_loop_exp[i, ]
+State1=row_i[,1]
+State2=row_i[,2]
+
+test_i <- cDNA_data_Seurat_split_FL7[[State1]]@assays$Geno_filtered$counts %>% t() %>% as.data.frame() 
+test_i2 <- cDNA_data_Seurat_split_FL7[[State2]]@assays$Geno_filtered$counts %>% t() %>% as.data.frame() 
+
+#test_var <- rownames(cDNA_data_Seurat_split_FL7$LZ@assays$Geno_filtered)
+
+for (x in test_var){
+test_sel_x <- test_i %>% select(all_of(x)) %>% mutate(State = State1)
+test_sel_x2 <- test_i2 %>% select(all_of(x)) %>% mutate(State = State2)
+
+test_comb <- rbind(test_sel_x, test_sel_x2)
+test_frame <- table(test_comb[[x]], test_comb$State)
+test <- chisq.test(test_frame, correct = FALSE)
+
+
+#Add test results to variable
+to_add <- data.frame(Variant = x, P_val = test$p.value, State1 = State1, State2 = State2)
+
+
+#Make perc and add to variable
+test_frame_perc <- prop.table(test_frame, margin = 2) %>% as.data.frame()
+test_frame_perc_df_wide <- pivot_wider(test_frame_perc, names_from = Var2, values_from = Freq)
+colnames(test_frame_perc_df_wide) <- c("Geno", "State1_perc", "State2_perc")
+
+#Make counts and add to variable 
+test_frame_count <- table(test_comb[[x]], test_comb$State) %>% as.data.frame()
+test_frame_count_df_wide <- pivot_wider(test_frame_count, names_from = Var2, values_from = Freq)
+colnames(test_frame_count_df_wide) <- c("Geno", "State1_count", "State2_count")
+
+test_frame_comb <- test_frame_perc_df_wide %>% left_join(test_frame_count_df_wide, by = c("Geno"))
+
+
+#Set values that are missing
+mv <- setdiff(required_values, test_frame_comb$Geno)
+
+#Make NA df for merging
+missing_df <- as.data.frame(matrix(ncol = length(names(test_frame_comb)), nrow = length(mv)))
+colnames(missing_df) <- colnames(test_frame_comb)
+missing_df$Geno <- as.factor(mv)
+
+test_frame_comb <- rbind(test_frame_comb, missing_df)
+test_frame_comb <- test_frame_comb %>% arrange(Geno)
+
+
+to_add_perc <- setNames(
+  data.frame(
+    test_frame_comb[1,2], test_frame_comb[1,3],
+    test_frame_comb[2,2], test_frame_comb[2,3],
+    test_frame_comb[3,2], test_frame_comb[3,3],
+    test_frame_comb[1,4], test_frame_comb[1,5],
+    test_frame_comb[2,4], test_frame_comb[2,5],
+    test_frame_comb[3,4], test_frame_comb[3,5]
+  ),
+  c("State1_0_perc", "State2_0_perc", "State1_1_perc", "State2_1_perc",
+    "State1_2_perc", "State2_2_perc", "State1_0_count", "State2_0_count",
+    "State1_1_count", "State2_1_count", "State1_2_count", "State2_2_count")
+)
+
+
+#Add perc to variable
+to_add <- cbind(to_add, to_add_perc)
+
+
+#Add to df for storing
+Chi_FL7 <- rbind(Chi_FL7, to_add)
+
+
+}
+                       
+  }, error = function(e) {
+    # This function is called if an error occurs
+    message(paste("Error in iteration", i, ":", e$message))
+    # Optionally, you can do other error handling here
+  })
+}
+
+
+#Adjust p-value
+p_adjusted <- p.adjust(Chi_FL7$P_val, method = "BH")
+Chi_FL7 <- Chi_FL7 %>% mutate(P_val_adj = p_adjusted)
+
+
+#Write output to file 
+
+write.csv(Chi_FL7, file = "SDR005_Stat_testing/Chi_FL7_Cell_Types_all.csv")
+
+
+
+
+
+#___________________________________________________________________________________________________________________________________
+#___________________________________________________________________________________________________________________________________
+#___________________________________________________________________________________________________________________________________
+
+
+#Run each state again all other states combined within a sample
+#___________________________________________________________________________________________________________________________________
+
+#FL7 - CellTypes - 1 State vs all 
+
+#Split seurat by state
+#remove non malignant cells!!!
+Idents(object = cDNA_data_Seurat_split$FL7) <- "CellTypes"
+
+cDNA_data_Seurat_split$FL7 <- subset(x = cDNA_data_Seurat_split$FL7, subset = CellTypes != "Other")
+cDNA_data_Seurat_split_FL7 <- SplitObject(cDNA_data_Seurat_split$FL7, split.by = "ident")
+table(Idents(cDNA_data_Seurat_split$FL7))
+
+
+
+#Make loop
+to_loop <- unique(Idents(cDNA_data_Seurat_split$FL7))
+to_loop <- as.character(to_loop)
+
+
+#To Chisquare testing - with multiple error correction
+
+#Empty dataframe for loop
+Chi_FL7 <- data.frame()
+
+#For filling missing values
+required_values <- 0:2 #Keep this line
+
+#Set variants for loop
+#test_var <- rownames(cDNA_data_Seurat_split_FL7$LZ@assays$Geno_filtered)
+
+i=1
+x="BCL2-chr18-63321414-A-G-upstream:gene:variant"
+
+
+for (i in seq_along(to_loop)) {
+  tryCatch({
+    
+State <- to_loop[i]
+Other_states <- to_loop[to_loop != State]
+
+test_i <- subset(x = cDNA_data_Seurat_split$FL7, subset = CellTypes == State) %>% GetAssay(assay = "Geno_filtered")
+test_i <- test_i$counts %>% t() %>% as.data.frame()
+
+test_i2 <- subset(x = cDNA_data_Seurat_split$FL7, subset = CellTypes != State) %>% GetAssay(assay = "Geno_filtered")
+test_i2 <- test_i2$counts %>% t() %>% as.data.frame()
+
+
+for (x in test_var){
+test_sel_x <- test_i %>% select(all_of(x)) %>% mutate(State = State)
+test_sel_x2 <- test_i2 %>% select(all_of(x)) %>% mutate(State = "non_state")
+
+test_comb <- rbind(test_sel_x, test_sel_x2)
+test_frame <- table(test_comb[[x]], test_comb$State)
+test <- chisq.test(test_frame, correct = FALSE)
+
+
+#Add test results to variable
+to_add <- data.frame(Variant = x, P_val = test$p.value, State1 = State, State2 = "non_state")
+
+
+#Make perc and add to variable
+test_frame_perc <- prop.table(test_frame, margin = 2) %>% as.data.frame()
+test_frame_perc_df_wide <- pivot_wider(test_frame_perc, names_from = Var2, values_from = Freq)
+colnames(test_frame_perc_df_wide) <- c("Geno", "State1_perc", "State2_perc")
+
+#Make counts and add to variable 
+test_frame_count <- table(test_comb[[x]], test_comb$State) %>% as.data.frame()
+test_frame_count_df_wide <- pivot_wider(test_frame_count, names_from = Var2, values_from = Freq)
+colnames(test_frame_count_df_wide) <- c("Geno", "State1_count", "State2_count")
+
+test_frame_comb <- test_frame_perc_df_wide %>% left_join(test_frame_count_df_wide, by = c("Geno"))
+
+
+#Set values that are missing
+mv <- setdiff(required_values, test_frame_comb$Geno)
+
+#Make NA df for merging
+missing_df <- as.data.frame(matrix(ncol = length(names(test_frame_comb)), nrow = length(mv)))
+colnames(missing_df) <- colnames(test_frame_comb)
+missing_df$Geno <- as.factor(mv)
+
+test_frame_comb <- rbind(test_frame_comb, missing_df)
+test_frame_comb <- test_frame_comb %>% arrange(Geno)
+
+
+to_add_perc <- setNames(
+  data.frame(
+    test_frame_comb[1,2], test_frame_comb[1,3],
+    test_frame_comb[2,2], test_frame_comb[2,3],
+    test_frame_comb[3,2], test_frame_comb[3,3],
+    test_frame_comb[1,4], test_frame_comb[1,5],
+    test_frame_comb[2,4], test_frame_comb[2,5],
+    test_frame_comb[3,4], test_frame_comb[3,5]
+  ),
+  c("State1_0_perc", "State2_0_perc", "State1_1_perc", "State2_1_perc",
+    "State1_2_perc", "State2_2_perc", "State1_0_count", "State2_0_count",
+    "State1_1_count", "State2_1_count", "State1_2_count", "State2_2_count")
+)
+
+
+#Add perc to variable
+to_add <- cbind(to_add, to_add_perc)
+
+
+#Add to df for storing
+Chi_FL7 <- rbind(Chi_FL7, to_add)
+
+
+}
+                       
+  }, error = function(e) {
+    # This function is called if an error occurs
+    message(paste("Error in iteration", i, ":", e$message))
+    # Optionally, you can do other error handling here
+  })
+}
+
+
+#Adjust p-value
+p_adjusted <- p.adjust(Chi_FL7$P_val, method = "BH")
+Chi_FL7 <- Chi_FL7 %>% mutate(P_val_adj = p_adjusted)
+
+
+#Write output to file 
+
+write.csv(Chi_FL7, file = "SDR005_Stat_testing/Chi_FL7_Cell_Types_B_cells_State_vs_all.csv")
+
+
+
+
+```
+
+
+
+
+#FL11
+
+
+
+# Chi-square - Find variable mutations between clusters
+
+
+```{r}
+#Load data
+
+cDNA_data_Seurat <- readRDS("SDR005_Combined_Geno_full_clustered.rds")
+metadata <- cDNA_data_Seurat@meta.data
+
+#Split Seurat by sample
+
+Idents(object = cDNA_data_Seurat) <- "Tumor_ID"
+table(Idents(cDNA_data_Seurat))
+cDNA_data_Seurat_split <- SplitObject(cDNA_data_Seurat, split.by = "ident")
+
+
+#Run for FL11 with Cell Types
+#For FL11
+
+#Split seurat by state
+Idents(object = cDNA_data_Seurat_split$FL11) <- "CellTypes"
+table(Idents(cDNA_data_Seurat_split$FL11))
+cDNA_data_Seurat_split_FL11 <- SplitObject(cDNA_data_Seurat_split$FL11, split.by = "ident")
+
+
+
+#Make table of all combinations of State for plotting 
+to_loop <- data.frame(State = unique(metadata$CellTypes))
+
+#Generate all combinations
+to_loop_exp <- expand.grid(State1 = to_loop$State, State2 = to_loop$State)
+to_loop_exp <- subset(to_loop_exp, State1 != State2) 
+to_loop_exp$State1 <- as.character(to_loop_exp$State1)
+to_loop_exp$State2 <- as.character(to_loop_exp$State2)
+to_loop_exp <- subset(to_loop_exp, State1 < State2)
+#to_loop_exp <- to_loop_exp %>%  mutate(index = 1:nrow(to_loop_exp))
+
+
+
+#To Chisquare testing - with multiple error correction
+
+#Empty dataframe for loop
+Chi_FL11 <- data.frame()
+
+#For filling missing values
+required_values <- 0:2 #Keep this line
+
+#Set variants for loop
+#test_var <- rownames(cDNA_data_Seurat_split_FL11$LZ@assays$Geno_filtered)
+
+i=1
+State1 = "LZ"
+State2 = "DZ"
+x="BCL2-chr18-63321414-A-G-upstream:gene:variant"
+
+
+for (i in 1:nrow(to_loop_exp)) {
+  tryCatch({
+row_i <- to_loop_exp[i, ]
+State1=row_i[,1]
+State2=row_i[,2]
+
+test_i <- cDNA_data_Seurat_split_FL11[[State1]]@assays$Geno_filtered$counts %>% t() %>% as.data.frame() 
+test_i2 <- cDNA_data_Seurat_split_FL11[[State2]]@assays$Geno_filtered$counts %>% t() %>% as.data.frame() 
+
+#test_var <- rownames(cDNA_data_Seurat_split_FL11$LZ@assays$Geno_filtered)
+
+for (x in test_var){
+test_sel_x <- test_i %>% select(all_of(x)) %>% mutate(State = State1)
+test_sel_x2 <- test_i2 %>% select(all_of(x)) %>% mutate(State = State2)
+
+test_comb <- rbind(test_sel_x, test_sel_x2)
+test_frame <- table(test_comb[[x]], test_comb$State)
+test <- chisq.test(test_frame, correct = FALSE)
+
+
+#Add test results to variable
+to_add <- data.frame(Variant = x, P_val = test$p.value, State1 = State1, State2 = State2)
+
+
+#Make perc and add to variable
+test_frame_perc <- prop.table(test_frame, margin = 2) %>% as.data.frame()
+test_frame_perc_df_wide <- pivot_wider(test_frame_perc, names_from = Var2, values_from = Freq)
+colnames(test_frame_perc_df_wide) <- c("Geno", "State1_perc", "State2_perc")
+
+#Make counts and add to variable 
+test_frame_count <- table(test_comb[[x]], test_comb$State) %>% as.data.frame()
+test_frame_count_df_wide <- pivot_wider(test_frame_count, names_from = Var2, values_from = Freq)
+colnames(test_frame_count_df_wide) <- c("Geno", "State1_count", "State2_count")
+
+test_frame_comb <- test_frame_perc_df_wide %>% left_join(test_frame_count_df_wide, by = c("Geno"))
+
+
+#Set values that are missing
+mv <- setdiff(required_values, test_frame_comb$Geno)
+
+#Make NA df for merging
+missing_df <- as.data.frame(matrix(ncol = length(names(test_frame_comb)), nrow = length(mv)))
+colnames(missing_df) <- colnames(test_frame_comb)
+missing_df$Geno <- as.factor(mv)
+
+test_frame_comb <- rbind(test_frame_comb, missing_df)
+test_frame_comb <- test_frame_comb %>% arrange(Geno)
+
+
+to_add_perc <- setNames(
+  data.frame(
+    test_frame_comb[1,2], test_frame_comb[1,3],
+    test_frame_comb[2,2], test_frame_comb[2,3],
+    test_frame_comb[3,2], test_frame_comb[3,3],
+    test_frame_comb[1,4], test_frame_comb[1,5],
+    test_frame_comb[2,4], test_frame_comb[2,5],
+    test_frame_comb[3,4], test_frame_comb[3,5]
+  ),
+  c("State1_0_perc", "State2_0_perc", "State1_1_perc", "State2_1_perc",
+    "State1_2_perc", "State2_2_perc", "State1_0_count", "State2_0_count",
+    "State1_1_count", "State2_1_count", "State1_2_count", "State2_2_count")
+)
+
+
+#Add perc to variable
+to_add <- cbind(to_add, to_add_perc)
+
+
+#Add to df for storing
+Chi_FL11 <- rbind(Chi_FL11, to_add)
+
+
+}
+                       
+  }, error = function(e) {
+    # This function is called if an error occurs
+    message(paste("Error in iteration", i, ":", e$message))
+    # Optionally, you can do other error handling here
+  })
+}
+
+
+#Adjust p-value
+p_adjusted <- p.adjust(Chi_FL11$P_val, method = "BH")
+Chi_FL11 <- Chi_FL11 %>% mutate(P_val_adj = p_adjusted)
+
+
+#Write output to file 
+
+write.csv(Chi_FL11, file = "SDR005_Stat_testing/Chi_FL11_Cell_Types_all.csv")
+
+
+
+
+
+
+#___________________________________________________________________________________________________________________________________
+#___________________________________________________________________________________________________________________________________
+#___________________________________________________________________________________________________________________________________
+
+
+#Run each state again all other states combined within a sample
+#___________________________________________________________________________________________________________________________________
+
+#FL11 - CellTypes - 1 State vs all 
+
+#Split seurat by state
+#remove non malignant cells!!!
+Idents(object = cDNA_data_Seurat_split$FL11) <- "CellTypes"
+
+cDNA_data_Seurat_split$FL11 <- subset(x = cDNA_data_Seurat_split$FL11, subset = CellTypes != "Other")
+cDNA_data_Seurat_split_FL11 <- SplitObject(cDNA_data_Seurat_split$FL11, split.by = "ident")
+table(Idents(cDNA_data_Seurat_split$FL11))
+
+
+
+#Make loop
+to_loop <- unique(Idents(cDNA_data_Seurat_split$FL11))
+to_loop <- as.character(to_loop)
+
+
+#To Chisquare testing - with multiple error correction
+
+#Empty dataframe for loop
+Chi_FL11 <- data.frame()
+
+#For filling missing values
+required_values <- 0:2 #Keep this line
+
+#Set variants for loop
+#test_var <- rownames(cDNA_data_Seurat_split_FL11$LZ@assays$Geno_filtered)
+
+i=1
+x="BCL2-chr18-63321414-A-G-upstream:gene:variant"
+
+
+for (i in seq_along(to_loop)) {
+  tryCatch({
+    
+State <- to_loop[i]
+Other_states <- to_loop[to_loop != State]
+
+test_i <- subset(x = cDNA_data_Seurat_split$FL11, subset = CellTypes == State) %>% GetAssay(assay = "Geno_filtered")
+test_i <- test_i$counts %>% t() %>% as.data.frame()
+
+test_i2 <- subset(x = cDNA_data_Seurat_split$FL11, subset = CellTypes != State) %>% GetAssay(assay = "Geno_filtered")
+test_i2 <- test_i2$counts %>% t() %>% as.data.frame()
+
+
+for (x in test_var){
+test_sel_x <- test_i %>% select(all_of(x)) %>% mutate(State = State)
+test_sel_x2 <- test_i2 %>% select(all_of(x)) %>% mutate(State = "non_state")
+
+test_comb <- rbind(test_sel_x, test_sel_x2)
+test_frame <- table(test_comb[[x]], test_comb$State)
+test <- chisq.test(test_frame, correct = FALSE)
+
+
+#Add test results to variable
+to_add <- data.frame(Variant = x, P_val = test$p.value, State1 = State, State2 = "non_state")
+
+
+#Make perc and add to variable
+test_frame_perc <- prop.table(test_frame, margin = 2) %>% as.data.frame()
+test_frame_perc_df_wide <- pivot_wider(test_frame_perc, names_from = Var2, values_from = Freq)
+colnames(test_frame_perc_df_wide) <- c("Geno", "State1_perc", "State2_perc")
+
+#Make counts and add to variable 
+test_frame_count <- table(test_comb[[x]], test_comb$State) %>% as.data.frame()
+test_frame_count_df_wide <- pivot_wider(test_frame_count, names_from = Var2, values_from = Freq)
+colnames(test_frame_count_df_wide) <- c("Geno", "State1_count", "State2_count")
+
+test_frame_comb <- test_frame_perc_df_wide %>% left_join(test_frame_count_df_wide, by = c("Geno"))
+
+
+#Set values that are missing
+mv <- setdiff(required_values, test_frame_comb$Geno)
+
+#Make NA df for merging
+missing_df <- as.data.frame(matrix(ncol = length(names(test_frame_comb)), nrow = length(mv)))
+colnames(missing_df) <- colnames(test_frame_comb)
+missing_df$Geno <- as.factor(mv)
+
+test_frame_comb <- rbind(test_frame_comb, missing_df)
+test_frame_comb <- test_frame_comb %>% arrange(Geno)
+
+
+to_add_perc <- setNames(
+  data.frame(
+    test_frame_comb[1,2], test_frame_comb[1,3],
+    test_frame_comb[2,2], test_frame_comb[2,3],
+    test_frame_comb[3,2], test_frame_comb[3,3],
+    test_frame_comb[1,4], test_frame_comb[1,5],
+    test_frame_comb[2,4], test_frame_comb[2,5],
+    test_frame_comb[3,4], test_frame_comb[3,5]
+  ),
+  c("State1_0_perc", "State2_0_perc", "State1_1_perc", "State2_1_perc",
+    "State1_2_perc", "State2_2_perc", "State1_0_count", "State2_0_count",
+    "State1_1_count", "State2_1_count", "State1_2_count", "State2_2_count")
+)
+
+
+#Add perc to variable
+to_add <- cbind(to_add, to_add_perc)
+
+
+#Add to df for storing
+Chi_FL11 <- rbind(Chi_FL11, to_add)
+
+
+}
+                       
+  }, error = function(e) {
+    # This function is called if an error occurs
+    message(paste("Error in iteration", i, ":", e$message))
+    # Optionally, you can do other error handling here
+  })
+}
+
+
+#Adjust p-value
+p_adjusted <- p.adjust(Chi_FL11$P_val, method = "BH")
+Chi_FL11 <- Chi_FL11 %>% mutate(P_val_adj = p_adjusted)
+
+
+#Write output to file 
+
+write.csv(Chi_FL11, file = "SDR005_Stat_testing/Chi_FL11_Cell_Types_B_cells_State_vs_all.csv")
+
+
+
+
+
+```
+
+
+
+
+
+#GCB4
+
+
+# Chi-square - Find variable mutations between clusters
+
+
+```{r}
+#Load data
+
+cDNA_data_Seurat <- readRDS("SDR005_Combined_Geno_full_clustered.rds")
+metadata <- cDNA_data_Seurat@meta.data
+
+#Split Seurat by sample
+
+Idents(object = cDNA_data_Seurat) <- "Tumor_ID"
+table(Idents(cDNA_data_Seurat))
+cDNA_data_Seurat_split <- SplitObject(cDNA_data_Seurat, split.by = "ident")
+
+
+#Run for GCB4 with Cell Types
+#For GCB4
+
+#Split seurat by state
+Idents(object = cDNA_data_Seurat_split$GCB4) <- "CellTypes"
+table(Idents(cDNA_data_Seurat_split$GCB4))
+cDNA_data_Seurat_split_GCB4 <- SplitObject(cDNA_data_Seurat_split$GCB4, split.by = "ident")
+
+
+
+#Make table of all combinations of State for plotting 
+to_loop <- data.frame(State = unique(metadata$CellTypes))
+
+#Generate all combinations
+to_loop_exp <- expand.grid(State1 = to_loop$State, State2 = to_loop$State)
+to_loop_exp <- subset(to_loop_exp, State1 != State2) 
+to_loop_exp$State1 <- as.character(to_loop_exp$State1)
+to_loop_exp$State2 <- as.character(to_loop_exp$State2)
+to_loop_exp <- subset(to_loop_exp, State1 < State2)
+#to_loop_exp <- to_loop_exp %>%  mutate(index = 1:nrow(to_loop_exp))
+
+
+
+#To Chisquare testing - with multiple error correction
+
+#Empty dataframe for loop
+Chi_GCB4 <- data.frame()
+
+#For filling missing values
+required_values <- 0:2 #Keep this line
+
+#Set variants for loop
+#test_var <- rownames(cDNA_data_Seurat_split_GCB4$LZ@assays$Geno_filtered)
+
+i=1
+State1 = "LZ"
+State2 = "DZ"
+x="BCL2-chr18-63321414-A-G-upstream:gene:variant"
+
+
+for (i in 1:nrow(to_loop_exp)) {
+  tryCatch({
+row_i <- to_loop_exp[i, ]
+State1=row_i[,1]
+State2=row_i[,2]
+
+test_i <- cDNA_data_Seurat_split_GCB4[[State1]]@assays$Geno_filtered$counts %>% t() %>% as.data.frame() 
+test_i2 <- cDNA_data_Seurat_split_GCB4[[State2]]@assays$Geno_filtered$counts %>% t() %>% as.data.frame() 
+
+#test_var <- rownames(cDNA_data_Seurat_split_GCB4$LZ@assays$Geno_filtered)
+
+for (x in test_var){
+test_sel_x <- test_i %>% select(all_of(x)) %>% mutate(State = State1)
+test_sel_x2 <- test_i2 %>% select(all_of(x)) %>% mutate(State = State2)
+
+test_comb <- rbind(test_sel_x, test_sel_x2)
+test_frame <- table(test_comb[[x]], test_comb$State)
+test <- chisq.test(test_frame, correct = FALSE)
+
+
+#Add test results to variable
+to_add <- data.frame(Variant = x, P_val = test$p.value, State1 = State1, State2 = State2)
+
+
+#Make perc and add to variable
+test_frame_perc <- prop.table(test_frame, margin = 2) %>% as.data.frame()
+test_frame_perc_df_wide <- pivot_wider(test_frame_perc, names_from = Var2, values_from = Freq)
+colnames(test_frame_perc_df_wide) <- c("Geno", "State1_perc", "State2_perc")
+
+#Make counts and add to variable 
+test_frame_count <- table(test_comb[[x]], test_comb$State) %>% as.data.frame()
+test_frame_count_df_wide <- pivot_wider(test_frame_count, names_from = Var2, values_from = Freq)
+colnames(test_frame_count_df_wide) <- c("Geno", "State1_count", "State2_count")
+
+test_frame_comb <- test_frame_perc_df_wide %>% left_join(test_frame_count_df_wide, by = c("Geno"))
+
+
+#Set values that are missing
+mv <- setdiff(required_values, test_frame_comb$Geno)
+
+#Make NA df for merging
+missing_df <- as.data.frame(matrix(ncol = length(names(test_frame_comb)), nrow = length(mv)))
+colnames(missing_df) <- colnames(test_frame_comb)
+missing_df$Geno <- as.factor(mv)
+
+test_frame_comb <- rbind(test_frame_comb, missing_df)
+test_frame_comb <- test_frame_comb %>% arrange(Geno)
+
+
+to_add_perc <- setNames(
+  data.frame(
+    test_frame_comb[1,2], test_frame_comb[1,3],
+    test_frame_comb[2,2], test_frame_comb[2,3],
+    test_frame_comb[3,2], test_frame_comb[3,3],
+    test_frame_comb[1,4], test_frame_comb[1,5],
+    test_frame_comb[2,4], test_frame_comb[2,5],
+    test_frame_comb[3,4], test_frame_comb[3,5]
+  ),
+  c("State1_0_perc", "State2_0_perc", "State1_1_perc", "State2_1_perc",
+    "State1_2_perc", "State2_2_perc", "State1_0_count", "State2_0_count",
+    "State1_1_count", "State2_1_count", "State1_2_count", "State2_2_count")
+)
+
+
+#Add perc to variable
+to_add <- cbind(to_add, to_add_perc)
+
+
+#Add to df for storing
+Chi_GCB4 <- rbind(Chi_GCB4, to_add)
+
+
+}
+                       
+  }, error = function(e) {
+    # This function is called if an error occurs
+    message(paste("Error in iteration", i, ":", e$message))
+    # Optionally, you can do other error handling here
+  })
+}
+
+
+#Adjust p-value
+p_adjusted <- p.adjust(Chi_GCB4$P_val, method = "BH")
+Chi_GCB4 <- Chi_GCB4 %>% mutate(P_val_adj = p_adjusted)
+
+
+#Write output to file 
+
+write.csv(Chi_GCB4, file = "SDR005_Stat_testing/Chi_GCB4_Cell_Types_all.csv")
+
+
+
+
+
+
+
+#___________________________________________________________________________________________________________________________________
+#___________________________________________________________________________________________________________________________________
+#___________________________________________________________________________________________________________________________________
+
+
+#Run each state again all other states combined within a sample
+#___________________________________________________________________________________________________________________________________
+
+#GCB4 - CellTypes - 1 State vs all 
+
+#Split seurat by state
+#remove non malignant cells!!!
+Idents(object = cDNA_data_Seurat_split$GCB4) <- "CellTypes"
+
+cDNA_data_Seurat_split$GCB4 <- subset(x = cDNA_data_Seurat_split$GCB4, subset = CellTypes != "Other")
+cDNA_data_Seurat_split_GCB4 <- SplitObject(cDNA_data_Seurat_split$GCB4, split.by = "ident")
+table(Idents(cDNA_data_Seurat_split$GCB4))
+
+
+
+#Make loop
+to_loop <- unique(Idents(cDNA_data_Seurat_split$GCB4))
+to_loop <- as.character(to_loop)
+
+
+#To Chisquare testing - with multiple error correction
+
+#Empty dataframe for loop
+Chi_GCB4 <- data.frame()
+
+#For filling missing values
+required_values <- 0:2 #Keep this line
+
+#Set variants for loop
+#test_var <- rownames(cDNA_data_Seurat_split_GCB4$LZ@assays$Geno_filtered)
+
+i=1
+x="BCL2-chr18-63321414-A-G-upstream:gene:variant"
+
+
+for (i in seq_along(to_loop)) {
+  tryCatch({
+    
+State <- to_loop[i]
+Other_states <- to_loop[to_loop != State]
+
+test_i <- subset(x = cDNA_data_Seurat_split$GCB4, subset = CellTypes == State) %>% GetAssay(assay = "Geno_filtered")
+test_i <- test_i$counts %>% t() %>% as.data.frame()
+
+test_i2 <- subset(x = cDNA_data_Seurat_split$GCB4, subset = CellTypes != State) %>% GetAssay(assay = "Geno_filtered")
+test_i2 <- test_i2$counts %>% t() %>% as.data.frame()
+
+
+for (x in test_var){
+test_sel_x <- test_i %>% select(all_of(x)) %>% mutate(State = State)
+test_sel_x2 <- test_i2 %>% select(all_of(x)) %>% mutate(State = "non_state")
+
+test_comb <- rbind(test_sel_x, test_sel_x2)
+test_frame <- table(test_comb[[x]], test_comb$State)
+test <- chisq.test(test_frame, correct = FALSE)
+
+
+#Add test results to variable
+to_add <- data.frame(Variant = x, P_val = test$p.value, State1 = State, State2 = "non_state")
+
+
+#Make perc and add to variable
+test_frame_perc <- prop.table(test_frame, margin = 2) %>% as.data.frame()
+test_frame_perc_df_wide <- pivot_wider(test_frame_perc, names_from = Var2, values_from = Freq)
+colnames(test_frame_perc_df_wide) <- c("Geno", "State1_perc", "State2_perc")
+
+#Make counts and add to variable 
+test_frame_count <- table(test_comb[[x]], test_comb$State) %>% as.data.frame()
+test_frame_count_df_wide <- pivot_wider(test_frame_count, names_from = Var2, values_from = Freq)
+colnames(test_frame_count_df_wide) <- c("Geno", "State1_count", "State2_count")
+
+test_frame_comb <- test_frame_perc_df_wide %>% left_join(test_frame_count_df_wide, by = c("Geno"))
+
+
+#Set values that are missing
+mv <- setdiff(required_values, test_frame_comb$Geno)
+
+#Make NA df for merging
+missing_df <- as.data.frame(matrix(ncol = length(names(test_frame_comb)), nrow = length(mv)))
+colnames(missing_df) <- colnames(test_frame_comb)
+missing_df$Geno <- as.factor(mv)
+
+test_frame_comb <- rbind(test_frame_comb, missing_df)
+test_frame_comb <- test_frame_comb %>% arrange(Geno)
+
+
+to_add_perc <- setNames(
+  data.frame(
+    test_frame_comb[1,2], test_frame_comb[1,3],
+    test_frame_comb[2,2], test_frame_comb[2,3],
+    test_frame_comb[3,2], test_frame_comb[3,3],
+    test_frame_comb[1,4], test_frame_comb[1,5],
+    test_frame_comb[2,4], test_frame_comb[2,5],
+    test_frame_comb[3,4], test_frame_comb[3,5]
+  ),
+  c("State1_0_perc", "State2_0_perc", "State1_1_perc", "State2_1_perc",
+    "State1_2_perc", "State2_2_perc", "State1_0_count", "State2_0_count",
+    "State1_1_count", "State2_1_count", "State1_2_count", "State2_2_count")
+)
+
+
+#Add perc to variable
+to_add <- cbind(to_add, to_add_perc)
+
+
+#Add to df for storing
+Chi_GCB4 <- rbind(Chi_GCB4, to_add)
+
+
+}
+                       
+  }, error = function(e) {
+    # This function is called if an error occurs
+    message(paste("Error in iteration", i, ":", e$message))
+    # Optionally, you can do other error handling here
+  })
+}
+
+
+#Adjust p-value
+p_adjusted <- p.adjust(Chi_GCB4$P_val, method = "BH")
+Chi_GCB4 <- Chi_GCB4 %>% mutate(P_val_adj = p_adjusted)
+
+
+#Write output to file 
+
+write.csv(Chi_GCB4, file = "SDR005_Stat_testing/Chi_GCB4_Cell_Types_B_cells_State_vs_all.csv")
+
+
+
+
+
+
+
+
+
+
+```
+
+
+

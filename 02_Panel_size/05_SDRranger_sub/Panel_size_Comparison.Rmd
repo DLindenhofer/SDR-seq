@@ -23,6 +23,8 @@ library(scales)
 library(reshape2)
 library(here)
 
+file_save_dir <- "/Users/dominik.lindenhofer/ownCloud/Shared_project_folder/Paper_drafts/2022_SDR_Paper/Source_data/Individual_files_all"
+
 ```
 
 #Load data - gDNA
@@ -39,21 +41,21 @@ cDNA_data_Seurat_120 <- readRDS(here("SDR002_120_120_Plots/SDR002_120_120_Seurat
 cDNA_data_Seurat_240 <- readRDS(here("SDR002_240_240_Plots/SDR002_240_240_Seurat.rds"))
 
 #Ref lists for cDNA
-cDNA_60_60_targets <- read.delim("Input/Panel_size_cDNA_60_60_targets.txt", header = FALSE) %>% pull(1)
-cDNA_120_120_targets <- read.delim("Input/Panel_size_cDNA_120_120_targets.txt", header = FALSE) %>% pull(1)
-cDNA_240_240_targets <- read.delim("Input/Panel_size_cDNA_240_240_targets.txt", header = FALSE) %>% pull(1)
+cDNA_60_60_targets <- read.delim("/Users/dominik.lindenhofer/Documents/Data_Local/202307_SDR002/SDR002_Refs_lists_R/SDR002_cDNA_60_60_targets-V2.txt", header = FALSE) %>% pull(1)
+cDNA_120_120_targets <- read.delim("/Users/dominik.lindenhofer/Documents/Data_Local/202307_SDR002/SDR002_Refs_lists_R/SDR002_cDNA_120_120_targets-V2.txt", header = FALSE) %>% pull(1)
+cDNA_240_240_targets <- read.delim("/Users/dominik.lindenhofer/Documents/Data_Local/202307_SDR002/SDR002_Refs_lists_R/SDR002_cDNA_240_240_targets-V2.txt", header = FALSE) %>% pull(1)
 
 
 
 
 #Ref lists for gDNA
-gDNA_60_60_targets <- read.delim("Input/Panel_size_gDNA_60_60_targets.txt", header = FALSE) %>% pull(1)
+gDNA_60_60_targets <- read.delim("/Users/dominik.lindenhofer/Documents/Data_Local/202307_SDR002/SDR002_Refs_lists_R/SDR002_gDNA_60_60_targets.txt", header = FALSE) %>% pull(1)
 gDNA_60_60_targets <- gDNA_60_60_targets %>% str_replace_all("_", "-")
 
-gDNA_120_120_targets <- read.delim("Input/Panel_size_gDNA_120_120_targets.txt", header = FALSE) %>% pull(1)
+gDNA_120_120_targets <- read.delim("/Users/dominik.lindenhofer/Documents/Data_Local/202307_SDR002/SDR002_Refs_lists_R/SDR002_gDNA_120_120_targets.txt", header = FALSE) %>% pull(1)
 gDNA_120_120_targets <- gDNA_120_120_targets %>% str_replace_all("_", "-")
 
-gDNA_240_240_targets <- read.delim("Input/Panel_size_gDNA_240_240_targets.txt", header = FALSE) %>% pull(1)
+gDNA_240_240_targets <- read.delim("/Users/dominik.lindenhofer/Documents/Data_Local/202307_SDR002/SDR002_Refs_lists_R/SDR002_gDNA_240_240_targets.txt", header = FALSE) %>% pull(1)
 gDNA_240_240_targets <- gDNA_240_240_targets %>% str_replace_all("_", "-")
 
 
@@ -136,12 +138,13 @@ cDNA_data_Seurat_240[["gDNA"]] <- gDNA_mat_assay
 
 #Make read_cutoff for covering a gDNA target - make new assay gDNA_cut
 
+cut_off = 10
 
 #60
 gDNA_mat <- cDNA_data_Seurat_60@assays$gDNA$counts  %>% as.data.frame()
 gDNA_mat_cut <- gDNA_mat %>%   
   mutate(across(everything(), ~ case_when(
-    . > 5 ~ .,
+    . > cut_off ~ .,
     TRUE ~ 0)))
 gDNA_cut_assay <- CreateAssay5Object(counts = as.sparse(gDNA_mat_cut))
 cDNA_data_Seurat_60[["gDNA_cut"]] <- gDNA_cut_assay
@@ -151,7 +154,7 @@ cDNA_data_Seurat_60[["gDNA_cut"]] <- gDNA_cut_assay
 gDNA_mat <- cDNA_data_Seurat_60fail@assays$gDNA$counts  %>% as.data.frame()
 gDNA_mat_cut <- gDNA_mat %>%   
   mutate(across(everything(), ~ case_when(
-    . > 5 ~ .,
+    . > cut_off ~ .,
     TRUE ~ 0)))
 gDNA_cut_assay <- CreateAssay5Object(counts = as.sparse(gDNA_mat_cut))
 cDNA_data_Seurat_60fail[["gDNA_cut"]] <- gDNA_cut_assay
@@ -161,7 +164,7 @@ cDNA_data_Seurat_60fail[["gDNA_cut"]] <- gDNA_cut_assay
 gDNA_mat <- cDNA_data_Seurat_120@assays$gDNA$counts  %>% as.data.frame()
 gDNA_mat_cut <- gDNA_mat %>%   
   mutate(across(everything(), ~ case_when(
-    . > 5 ~ .,
+    . > cut_off ~ .,
     TRUE ~ 0)))
 gDNA_cut_assay <- CreateAssay5Object(counts = as.sparse(gDNA_mat_cut))
 cDNA_data_Seurat_120[["gDNA_cut"]] <- gDNA_cut_assay
@@ -171,7 +174,7 @@ cDNA_data_Seurat_120[["gDNA_cut"]] <- gDNA_cut_assay
 gDNA_mat <- cDNA_data_Seurat_240@assays$gDNA$counts  %>% as.data.frame()
 gDNA_mat_cut <- gDNA_mat %>%   
   mutate(across(everything(), ~ case_when(
-    . > 5 ~ .,
+    . > cut_off ~ .,
     TRUE ~ 0)))
 gDNA_cut_assay <- CreateAssay5Object(counts = as.sparse(gDNA_mat_cut))
 cDNA_data_Seurat_240[["gDNA_cut"]] <- gDNA_cut_assay
@@ -311,6 +314,14 @@ ggsave(filename = title, path = plot_save_dir, plot = p, device = "pdf", scale =
 
 p
 
+to_file <- metadata %>% dplyr::select(cell, nFeature_RNA_perc, Sample = orig.ident)
+to_file <- to_file %>% mutate(Sample = case_when(Sample == "SDR002_60_60" ~ "SDR002_120",
+                                                 Sample == "SDR002_120_120" ~ "SDR002_240",
+                                                 Sample == "SDR002_240_240" ~ "SDR002_480",))
+file_name = "Fig2_S4_h_nGenes_Violin_perc.csv"
+write.csv(to_file, paste0(file_save_dir, "/", file_name), row.names = FALSE) 
+
+
 ```
 
 
@@ -368,6 +379,14 @@ ggsave(filename = title, path = plot_save_dir, plot = p, device = "pdf", scale =
        width = 10, height = 15, units = "cm", dpi = 300)
 
 p
+
+
+to_file <- metadata %>% dplyr::select(cell, nFeature_gDNA_perc = nFeature_gDNA_cut_perc, Sample = orig.ident)
+to_file <- to_file %>% mutate(Sample = case_when(Sample == "SDR002_60_60" ~ "SDR002_120",
+                                                 Sample == "SDR002_120_120" ~ "SDR002_240",
+                                                 Sample == "SDR002_240_240" ~ "SDR002_480",))
+file_name = "Fig2_S4_c_nAmplicons_Violin_perc.csv"
+write.csv(to_file, paste0(file_save_dir, "/", file_name), row.names = FALSE) 
 
 ```
 
@@ -490,6 +509,15 @@ ggsave(filename = title, path = plot_save_dir, plot = p, device = "pdf", scale =
 p
 
 
+to_file <- metadata %>% dplyr::select(cell, nReads_gDNA, Sample = orig.ident)
+to_file <- to_file %>% mutate(Sample = case_when(Sample == "SDR002_60_60" ~ "SDR002_120",
+                                                 Sample == "SDR002_120_120" ~ "SDR002_240",
+                                                 Sample == "SDR002_240_240" ~ "SDR002_480",))
+file_name = "Fig2_S3_a_nReads_gDNA_Violin.csv"
+write.csv(to_file, paste0(file_save_dir, "/", file_name), row.names = FALSE) 
+
+
+
 ```
 
 
@@ -554,6 +582,17 @@ ggsave(filename = title, path = plot_save_dir, plot = p, device = "pdf", scale =
 p
 
 
+
+to_file <- metadata %>% dplyr::select(cell, nReads_RNA, Sample = orig.ident)
+to_file <- to_file %>% mutate(Sample = case_when(Sample == "SDR002_60_60" ~ "SDR002_120",
+                                                 Sample == "SDR002_120_120" ~ "SDR002_240",
+                                                 Sample == "SDR002_240_240" ~ "SDR002_480",))
+file_name = "Fig2_S3_c_nReads_RNA_Violin.csv"
+write.csv(to_file, paste0(file_save_dir, "/", file_name), row.names = FALSE) 
+
+
+
+
 ```
 
 
@@ -583,6 +622,13 @@ p
 
 ggsave(filename = title, path = plot_save_dir, plot = p, device = "pdf", scale = 1,
        width = 30, height = 15, units = "cm", dpi = 300)
+
+to_file <- metadata %>% dplyr::select(cell, nCount_RNA, nReads_gDNA, nFeature_gDNA_perc = nFeature_gDNA_cut_perc, Sample = orig.ident)
+to_file <- to_file %>% mutate(Sample = case_when(Sample == "SDR002_60_60" ~ "SDR002_120",
+                                                 Sample == "SDR002_120_120" ~ "SDR002_240",
+                                                 Sample == "SDR002_240_240" ~ "SDR002_480",))
+file_name = "Fig2_S4_a_nCount_RNA-nReads_gDNA-nFeature_gDNA_perc_gDNA.csv"
+write.csv(to_file, paste0(file_save_dir, "/", file_name), row.names = FALSE) 
 
 
 ```
@@ -614,6 +660,15 @@ p
 
 ggsave(filename = title, path = plot_save_dir, plot = p, device = "pdf", scale = 1,
        width = 30, height = 15, units = "cm", dpi = 300)
+
+
+to_file <- metadata %>% dplyr::select(cell, nCount_RNA, nReads_gDNA, nFeature_RNA_perc, Sample = orig.ident)
+to_file <- to_file %>% mutate(Sample = case_when(Sample == "SDR002_60_60" ~ "SDR002_120",
+                                                 Sample == "SDR002_120_120" ~ "SDR002_240",
+                                                 Sample == "SDR002_240_240" ~ "SDR002_480",))
+file_name = "Fig2_S4_f_nCount_RNA-nReads_gDNA-nFeature_gDNA_perc_RNA.csv"
+write.csv(to_file, paste0(file_save_dir, "/", file_name), row.names = FALSE) 
+
 
 
 ```
@@ -740,13 +795,13 @@ gDNA_reads_aver_expr$Type <- factor(gDNA_reads_aver_expr$Type, levels = c("SDR00
 #Load target gene lists
 
 #Ref lists for gDNA
-gDNA_60_60_targets <- read.delim("Input/Panel_size_gDNA_60_60_targets.txt", header = FALSE) %>% pull(1)
+gDNA_60_60_targets <- read.delim("/Users/dominik.lindenhofer/Documents/Data_Local/202307_SDR002/SDR002_Refs_lists_R/SDR002_gDNA_60_60_targets.txt", header = FALSE) %>% pull(1)
 gDNA_60_60_targets <- gDNA_60_60_targets %>% str_replace_all("_", "-")
 
-gDNA_120_120_targets <- read.delim("Input/Panel_size_gDNA_120_120_targets.txt", header = FALSE) %>% pull(1)
+gDNA_120_120_targets <- read.delim("/Users/dominik.lindenhofer/Documents/Data_Local/202307_SDR002/SDR002_Refs_lists_R/SDR002_gDNA_120_120_targets.txt", header = FALSE) %>% pull(1)
 gDNA_120_120_targets <- gDNA_120_120_targets %>% str_replace_all("_", "-")
 
-gDNA_240_240_targets <- read.delim("Input/Panel_size_gDNA_240_240_targets.txt", header = FALSE) %>% pull(1)
+gDNA_240_240_targets <- read.delim("/Users/dominik.lindenhofer/Documents/Data_Local/202307_SDR002/SDR002_Refs_lists_R/SDR002_gDNA_240_240_targets.txt", header = FALSE) %>% pull(1)
 gDNA_240_240_targets <- gDNA_240_240_targets %>% str_replace_all("_", "-")
 
 gDNA_targets_common <- intersect(gDNA_60_60_targets, gDNA_120_120_targets) 
@@ -771,7 +826,7 @@ gDNA_reads_aver_expr_common <- gDNA_reads_aver_expr_common %>%
   ungroup()
 
 
-#Count how many over 90 % 
+#Count how many over 80 % 
 
 cut_off = 0.8
 
@@ -791,9 +846,13 @@ gDNA_reads_aver_expr_count_cut <- gDNA_reads_aver_expr %>%
 ```{r}
 
 
+
+
 title = "nReads_gDNA_Violin_common.pdf"
 
 p <- gDNA_mat_res_common %>% 
+    group_by(Type, cell) %>%
+    summarise(nReads_gDNA = sum(nReads_gDNA)) %>%
   	ggplot(aes(x=Type, y=nReads_gDNA, fill=Type)) + 
   geom_violin(alpha = 0.2, adjust = 1)+
   geom_boxplot(width = 0.25)+
@@ -813,6 +872,21 @@ ggsave(filename = title, path = plot_save_dir, plot = p, device = "pdf", scale =
 p
 
 
+to_file <- gDNA_mat_res_common %>% 
+    group_by(Type, cell) %>%
+    summarise(nReads_gDNA = sum(nReads_gDNA)) %>% 
+ dplyr::rename(Sample = Type)
+
+to_file <- to_file %>% mutate(Sample = case_when(Sample == "SDR002_60_60" ~ "SDR002_120",
+                                                 Sample == "SDR002_120_120" ~ "SDR002_240",
+                                                 Sample == "SDR002_240_240" ~ "SDR002_480",))
+
+to_file <- to_file %>% mutate(cell = gsub("^[0-9]+[-_]*", "", cell))
+to_file <- to_file %>% mutate(cell = gsub("^[0-9]+[-_]*", "", cell))
+
+file_name = "Fig2_S3_b_nReads_gDNA_Violin_common.csv"
+write.csv(to_file, paste0(file_save_dir, "/", file_name), row.names = FALSE) 
+
 ```
 
 ###Amplicons per cell (Amplicons) - Violin - common only 
@@ -824,7 +898,7 @@ title = "nAmplicons_Violin_perc_common.pdf"
 
 p <- gDNA_mat_res_common %>%
       group_by(Type, cell) %>%
-      dplyr::summarize(nFeature_gDNA_common = sum(nReads_gDNA > 5),                                     
+      dplyr::summarize(nFeature_gDNA_common = sum(nReads_gDNA > 10),                                     
       .groups = "drop") %>%                                    
         mutate(nFeature_gDNA_common_perc = nFeature_gDNA_common/60) %>%                                                            
   	ggplot(aes(x=Type, y=nFeature_gDNA_common_perc, fill=Type)) + 
@@ -844,6 +918,27 @@ ggsave(filename = title, path = plot_save_dir, plot = p, device = "pdf", scale =
        width = 10, height = 15, units = "cm", dpi = 300)
 
 p
+
+
+to_file <- gDNA_mat_res_common %>%
+      group_by(Type, cell) %>%
+      dplyr::summarize(nFeature_gDNA_common = sum(nReads_gDNA > 10),                                
+      .groups = "drop") %>%                                    
+        mutate(nFeature_gDNA_common_perc = nFeature_gDNA_common/60) %>%
+  dplyr::select(-nFeature_gDNA_common) %>%
+  dplyr::rename(Sample = Type)
+
+to_file <- to_file %>% mutate(Sample = case_when(Sample == "SDR002_60_60" ~ "SDR002_120",
+                                                 Sample == "SDR002_120_120" ~ "SDR002_240",
+                                                 Sample == "SDR002_240_240" ~ "SDR002_480",))
+
+to_file <- to_file %>% mutate(cell = gsub("^[0-9]+[-_]*", "", cell))
+to_file <- to_file %>% mutate(cell = gsub("^[0-9]+[-_]*", "", cell))
+
+file_name = "Fig2_S4_e_nAmplicons_Violin_perc_common.csv"
+write.csv(to_file, paste0(file_save_dir, "/", file_name), row.names = FALSE) 
+
+
 
 
 ```
@@ -920,6 +1015,8 @@ title = "nReads_RNA_Violin_common.pdf"
 
 p <- RNA_reads_mat_res %>% 
   filter(ID %in% cDNA_targets_common) %>% 
+      group_by(Type, cell) %>%
+    summarise(nReads_RNA_reads = sum(nReads_RNA_reads)) %>%
   	ggplot(aes(x=Type, y=nReads_RNA_reads, fill=Type)) + 
   geom_violin(alpha = 0.2, adjust = 1)+
   geom_boxplot(width = 0.25)+
@@ -937,6 +1034,23 @@ ggsave(filename = title, path = plot_save_dir, plot = p, device = "pdf", scale =
        width = 10, height = 15, units = "cm", dpi = 300)
 
 p
+
+to_file <- RNA_reads_mat_res %>% 
+  filter(ID %in% cDNA_targets_common) %>% 
+      group_by(Type, cell) %>%
+    summarise(nReads_RNA = sum(nReads_RNA_reads)) %>%
+ dplyr::rename(Sample = Type)
+
+to_file <- to_file %>% mutate(Sample = case_when(Sample == "SDR002_60_60" ~ "SDR002_120",
+                                                 Sample == "SDR002_120_120" ~ "SDR002_240",
+                                                 Sample == "SDR002_240_240" ~ "SDR002_480",))
+
+to_file <- to_file %>% mutate(cell = gsub("^[0-9]+[-_]*", "", cell))
+to_file <- to_file %>% mutate(cell = gsub("^[0-9]+[-_]*", "", cell))
+
+file_name = "Fig2_S3_d_nReads_RNA_Violin_common.csv"
+write.csv(to_file, paste0(file_save_dir, "/", file_name), row.names = FALSE) 
+
 
 
 ```
@@ -1003,11 +1117,9 @@ RNA_UMIs_aver_expr$Type <- factor(RNA_UMIs_aver_expr$Type, levels = c("SDR002_60
 #Load target gene lists
 
 
-#Ref lists for cDNA
-cDNA_60_60_targets <- read.delim("Input/Panel_size_cDNA_60_60_targets.txt", header = FALSE) %>% pull(1)
-cDNA_120_120_targets <- read.delim("Input/Panel_size_cDNA_120_120_targets.txt", header = FALSE) %>% pull(1)
-cDNA_240_240_targets <- read.delim("Input/Panel_size_cDNA_240_240_targets.txt", header = FALSE) %>% pull(1)
-
+cDNA_60_60_targets <- read.delim("/Users/dominik.lindenhofer/Documents/Data_Local/202307_SDR002/SDR002_Refs_lists_R/SDR002_cDNA_60_60_targets-V2.txt", header = FALSE) 
+cDNA_120_120_targets <- read.delim("/Users/dominik.lindenhofer/Documents/Data_Local/202307_SDR002/SDR002_Refs_lists_R/SDR002_cDNA_120_120_targets-V2.txt", header = FALSE) 
+cDNA_240_240_targets <- read.delim("/Users/dominik.lindenhofer/Documents/Data_Local/202307_SDR002/SDR002_Refs_lists_R/SDR002_cDNA_240_240_targets-V2.txt", header = FALSE) 
 
 #Define common ones
 cDNA_targets_common <- cDNA_60_60_targets %>% filter(V2 == "CA" | V2 == "C") %>% dplyr::pull(1)
@@ -1076,6 +1188,25 @@ ggsave(filename = title, path = plot_save_dir, plot = p, device = "pdf", scale =
 p
 
 
+to_file <- RNA_mat_res_common  %>%
+      group_by(Type, cell) %>%
+      dplyr::summarize(nFeature_RNA_common = sum(nUMIs_RNA > 0),                                    
+      .groups = "drop") %>%                                    
+        mutate(nFeature_RNA_common_perc = nFeature_RNA_common/30) %>%
+  dplyr::select(-nFeature_RNA_common) %>%
+  dplyr::rename(Sample = Type)
+
+to_file <- to_file %>% mutate(Sample = case_when(Sample == "SDR002_60_60" ~ "SDR002_120",
+                                                 Sample == "SDR002_120_120" ~ "SDR002_240",
+                                                 Sample == "SDR002_240_240" ~ "SDR002_480"))
+
+to_file <- to_file %>% mutate(cell = gsub("^[0-9]+[-_]*", "", cell))
+to_file <- to_file %>% mutate(cell = gsub("^[0-9]+[-_]*", "", cell))
+
+file_name = "Fig2_S4_j_nGenes_Violin_perc_common.csv"
+write.csv(to_file, paste0(file_save_dir, "/", file_name), row.names = FALSE) 
+
+
 ```
 
 
@@ -1110,6 +1241,21 @@ ggsave(filename = title , path = plot_save_dir, plot = p, device = "pdf", scale 
 
 p
 
+
+
+to_file <- gDNA_reads_aver_expr  %>%
+  dplyr::select(ID, frac_cells, avg_nReads_log1p, Sample = Type)
+
+to_file <- to_file %>% mutate(Sample = case_when(Sample == "SDR002_60_60" ~ "SDR002_120",
+                                                 Sample == "SDR002_120_120" ~ "SDR002_240",
+                                                 Sample == "SDR002_240_240" ~ "SDR002_480"))
+
+
+file_name = "Fig2_S4_b_gDNA_average_expression_vs_fract_cells_Exp_all.csv"
+write.csv(to_file, paste0(file_save_dir, "/", file_name), row.names = FALSE) 
+
+
+
 ```
 
 
@@ -1140,6 +1286,18 @@ ggsave(filename = title , path = plot_save_dir, plot = p, device = "pdf", scale 
        width = 30, height = 15, units = "cm", dpi = 300)
 
 p
+
+to_file <- gDNA_reads_aver_expr_common  %>%
+  dplyr::select(ID, frac_cells, avg_nReads_log1p, Sample = Type)
+
+to_file <- to_file %>% mutate(Sample = case_when(Sample == "SDR002_60_60" ~ "SDR002_120",
+                                                 Sample == "SDR002_120_120" ~ "SDR002_240",
+                                                 Sample == "SDR002_240_240" ~ "SDR002_480"))
+
+
+file_name = "Fig2_S4_d_gDNA_average_expression_vs_fract_cells_Exp_common.csv"
+write.csv(to_file, paste0(file_save_dir, "/", file_name), row.names = FALSE) 
+
 
 ```
 
@@ -1238,7 +1396,7 @@ gDNA_reads_aver_expr_common_figure$Class <- factor(gDNA_reads_aver_expr_common_f
 
 
 
-pl1 <-  gDNA_reads_aver_expr_figure  %>%
+pl1 <-  gDNA_reads_aver_expr_common_figure  %>%
   ggplot(aes(y = Class,  x = factor(Type))) + 
   geom_tile(aes(fill = avg_nReads_per_targ)) +  
   scale_fill_continuous(low = "white", high = "white")
@@ -1259,6 +1417,20 @@ pl2
 
 
 ggsave(filename = "Dot_plot_expression_fraction_gDNA_common_for_figure.pdf", path = plot_save_dir, plot = pl2, device = "pdf", scale = 1,width = 12, height = 12, units = "cm", dpi = 300)
+
+
+
+to_file <- gDNA_reads_aver_expr_common_figure  %>%
+  dplyr::select(Class, avg_nReads_per_targ_log1p, avg_frac_cell_per_targ, Sample = Type)
+
+to_file <- to_file %>% mutate(Sample = case_when(Sample == "SDR002_60_60" ~ "SDR002_120",
+                                                 Sample == "SDR002_120_120" ~ "SDR002_240",
+                                                 Sample == "SDR002_240_240" ~ "SDR002_480"))
+
+file_name = "Fig2_M_g_Dot_plot_expression_fraction_gDNA_common_for_figure.csv"
+write.csv(to_file, paste0(file_save_dir, "/", file_name), row.names = FALSE) 
+
+
        
 ```
 
@@ -1272,7 +1444,7 @@ ggsave(filename = "Dot_plot_expression_fraction_gDNA_common_for_figure.pdf", pat
 
 
 title = "Normailzed_read_depth_vs_fraction_of_cells_per_Class_gDNA_common.pdf"
-p <- gDNA_reads_aver_expr_figure  %>%
+p <- gDNA_reads_aver_expr_common_figure  %>%
 ggplot(aes(x = avg_frac_cell_per_targ, y = avg_nReads_per_targ_log1p, color = Class)) +
   geom_point(size = 7) +
   labs(x = "% cells detected in", y = "avg_nReads_per_targ") +
@@ -1293,7 +1465,7 @@ ggsave(filename = title, path = plot_save_dir, plot = p, device = "pdf", scale =
 
 
 title = "Normailzed_read_depth_vs_fraction_of_cells_per_Class_gDNA_common_with_legend.pdf"
-p <- gDNA_reads_aver_expr_figure  %>%
+p <- gDNA_reads_aver_expr_common_figure  %>%
 ggplot(aes(x = avg_frac_cell_per_targ, y = avg_nReads_per_targ_log1p, color = Class)) +
   geom_point(size = 7) +
   labs(x = "% cells detected in", y = "avg_nReads_per_targ") +
@@ -1326,6 +1498,8 @@ ggsave(filename = title, path = plot_save_dir, plot = p, device = "pdf", scale =
 title = "FC_gDNA_frac_cells-vs-FC_gDNA_avg_nReads_commonn.pdf"
 
 p <- gDNA_reads_aver_expr_common  %>%
+    filter(!is.na(frac_cells_fc)) %>%
+  filter(frac_cells_fc != "Inf") %>%
 ggplot(aes(x = frac_cells_fc , y = avg_nReads_fc, color = Type)) +
   geom_point(size = 7) +
   labs(x = "FC_frac_cells" , y = "FC_avg_nReads") +
@@ -1347,6 +1521,18 @@ ggsave(filename = title, path = plot_save_dir, plot = p, device = "pdf", scale =
 p
 
 
+to_file <- gDNA_reads_aver_expr_common  %>%
+  dplyr::select(Sample = Type, frac_cells_fc, avg_nReads_fc, avg_nReads_log1p)
+
+to_file <- to_file %>% mutate(Sample = case_when(Sample == "SDR002_60_60" ~ "SDR002_120",
+                                                 Sample == "SDR002_120_120" ~ "SDR002_240",
+                                                 Sample == "SDR002_240_240" ~ "SDR002_480"))
+
+file_name = "Fig2_S5_a_FC_gDNA_frac_cells-vs-FC_gDNA_avg_nReads_commonn.csv"
+write.csv(to_file, paste0(file_save_dir, "/", file_name), row.names = FALSE) 
+
+
+
 ```
 
 
@@ -1359,6 +1545,8 @@ title = "FC_gDNA_frac_cells-vs-gDNA_avg_nReads_log1p_commonn.pdf"
 
 
 p <- gDNA_reads_aver_expr_common  %>%
+  filter(!is.na(frac_cells_fc)) %>%
+  filter(frac_cells_fc != "Inf") %>%
 ggplot(aes(x = frac_cells_fc, y =  avg_nReads_log1p, color = Type)) +
   geom_point(size = 7) +
   labs(x = "FC_frac_cells", y = "avg_nReads") +
@@ -1517,7 +1705,7 @@ cor_data <- gDNA_reads_aver_expr_common_cor %>%
   
 
 title = "Correlation_gDNA_avg_nReads_common.pdf"
-p <- gDNA_reads_aver_expr_cor  %>%
+p <- gDNA_reads_aver_expr_common_cor  %>%
 ggplot(aes(x = avg_nReads_60, y =  avg_nReads, color = Type)) +
   geom_point(size = 7) +
   scale_color_manual(values = group_colors )+
@@ -1538,6 +1726,20 @@ p
 ggsave(filename = title, path = plot_save_dir, plot = p, device = "pdf", scale = 1,width = 15, height = 15, units = "cm", dpi = 300)
        
 
+#PICK UP HERE!!!!!!!
+
+to_file <- gDNA_reads_aver_expr_common_cor  %>%
+  dplyr::select(Sample = Type, avg_nReads_60, avg_nReads)
+
+to_file <- to_file %>% left_join(cor_data[,c(1:2)], by = c("Sample" = "Type"))
+
+to_file <- to_file %>% mutate(Sample = case_when(Sample == "SDR002_60_60" ~ "SDR002_120",
+                                                 Sample == "SDR002_120_120" ~ "SDR002_240",
+                                                 Sample == "SDR002_240_240" ~ "SDR002_480"))
+
+file_name = "Fig2_M_c_Correlation_gDNA_avg_nReads_common.csv"
+write.csv(to_file, paste0(file_save_dir, "/", file_name), row.names = FALSE) 
+
 
 
 ```
@@ -1556,7 +1758,7 @@ cor_data <- gDNA_reads_aver_expr_common_cor %>%
   
 
 title = "Correlation_gDNA_frac_cells_common.pdf"
-p <- gDNA_reads_aver_expr_cor  %>%
+p <- gDNA_reads_aver_expr_common_cor  %>%
 ggplot(aes(x = frac_cells_60, y =  frac_cells, color = Type)) +
   geom_point(size = 7) +
   scale_color_manual(values = group_colors )+
@@ -1579,6 +1781,24 @@ p
 
 ggsave(filename = title, path = plot_save_dir, plot = p, device = "pdf", scale = 1,width = 15, height = 15, units = "cm", dpi = 300)
        
+
+to_file <- gDNA_reads_aver_expr_common_cor  %>%
+  dplyr::select(Sample = Type, frac_cells_60, frac_cells)
+
+
+to_file <- to_file %>% left_join(cor_data[,c(1:2)], by = c("Sample" = "Type"))
+
+to_file <- to_file %>% mutate(Sample = case_when(Sample == "SDR002_60_60" ~ "SDR002_120",
+                                                 Sample == "SDR002_120_120" ~ "SDR002_240",
+                                                 Sample == "SDR002_240_240" ~ "SDR002_480"))
+
+file_name = "Fig2_M_b_Correlation_gDNA_frac_cells_common.csv"
+write.csv(to_file, paste0(file_save_dir, "/", file_name), row.names = FALSE) 
+
+
+
+
+
 
 
 ```
@@ -1618,6 +1838,21 @@ ggsave(filename = title , path = plot_save_dir, plot = p, device = "pdf", scale 
 
 p
 
+
+
+to_file <- RNA_UMIs_aver_expr  %>%
+  dplyr::select(ID, frac_cells, avg_nUMIs_log1p, Sample = Type)
+
+to_file <- to_file %>% mutate(Sample = case_when(Sample == "SDR002_60_60" ~ "SDR002_120",
+                                                 Sample == "SDR002_120_120" ~ "SDR002_240",
+                                                 Sample == "SDR002_240_240" ~ "SDR002_480"))
+
+
+file_name = "Fig2_S4_g_RNA_average_expression_vs_fract_cells_Exp_all.csv"
+write.csv(to_file, paste0(file_save_dir, "/", file_name), row.names = FALSE) 
+
+
+
 ```
 
 
@@ -1650,6 +1885,20 @@ ggsave(filename = title , path = plot_save_dir, plot = p, device = "pdf", scale 
        width = 30, height = 15, units = "cm", dpi = 300)
 
 p
+
+
+to_file <- RNA_UMIs_aver_expr_common  %>%
+  dplyr::select(ID, frac_cells, avg_nUMIs_log1p, Sample = Type)
+
+to_file <- to_file %>% mutate(Sample = case_when(Sample == "SDR002_60_60" ~ "SDR002_120",
+                                                 Sample == "SDR002_120_120" ~ "SDR002_240",
+                                                 Sample == "SDR002_240_240" ~ "SDR002_480"))
+
+
+file_name = "Fig2_S4_i_RNA_average_expression_vs_fract_cells_Exp_common.csv"
+write.csv(to_file, paste0(file_save_dir, "/", file_name), row.names = FALSE) 
+
+
 
 ```
 
@@ -1760,6 +2009,19 @@ pl2
 
 
 ggsave(filename = "Dot_plot_expression_fraction_RNA_common_for_figure.pdf", path = plot_save_dir, plot = pl2, device = "pdf", scale = 1,width = 12, height = 6, units = "cm", dpi = 300)
+
+
+
+
+to_file <-  RNA_UMIs_aver_expr_common_figure  %>%
+  dplyr::select(Class, avg_nUMIs_per_targ_log1p, avg_frac_cell_per_targ, Sample = Type)
+
+to_file <- to_file %>% mutate(Sample = case_when(Sample == "SDR002_60_60" ~ "SDR002_120",
+                                                 Sample == "SDR002_120_120" ~ "SDR002_240",
+                                                 Sample == "SDR002_240_240" ~ "SDR002_480"))
+
+file_name = "Fig2_M_i_Dot_plot_expression_fraction_RNA_common_for_figure.csv"
+write.csv(to_file, paste0(file_save_dir, "/", file_name), row.names = FALSE) 
        
 
 
@@ -1855,6 +2117,17 @@ ggsave(filename = title, path = plot_save_dir, plot = p, device = "pdf", scale =
        width = 30, height = 15, units = "cm", dpi = 300)
 
 p
+
+
+to_file <- RNA_UMIs_aver_expr_common  %>%
+  dplyr::select(Sample = Type, frac_cells_fc, avg_nUMIs_fc, avg_nUMIs_log1p)
+
+to_file <- to_file %>% mutate(Sample = case_when(Sample == "SDR002_60_60" ~ "SDR002_120",
+                                                 Sample == "SDR002_120_120" ~ "SDR002_240",
+                                                 Sample == "SDR002_240_240" ~ "SDR002_480"))
+
+file_name = "Fig2_S5_b_FC_RNA_frac_cells-vs-FC_RNA_avg_nUMIs_commonn.csv"
+write.csv(to_file, paste0(file_save_dir, "/", file_name), row.names = FALSE) 
 
 
 ```
@@ -2048,7 +2321,25 @@ geom_text(data = cor_data, aes(label = sprintf("Correlation: %.2f", correlation)
 p
 
 ggsave(filename = title, path = plot_save_dir, plot = p, device = "pdf", scale = 1,width = 15, height = 15, units = "cm", dpi = 300)
-       
+      
+
+to_file <- RNA_UMIs_aver_expr_common_cor  %>%
+  dplyr::select(Sample = Type, avg_nUMIs_60, avg_nUMIs)
+
+to_file <- to_file %>% left_join(cor_data[,c(1:2)], by = c("Sample" = "Type"))
+
+to_file <- to_file %>% mutate(Sample = case_when(Sample == "SDR002_60_60" ~ "SDR002_120",
+                                                 Sample == "SDR002_120_120" ~ "SDR002_240",
+                                                 Sample == "SDR002_240_240" ~ "SDR002_480"))
+
+file_name = "Fig2_M_e_Correlation_RNA_avg_nReads_common.csv"
+write.csv(to_file, paste0(file_save_dir, "/", file_name), row.names = FALSE) 
+
+
+
+
+
+
 
 ```
 
@@ -2089,7 +2380,23 @@ geom_text(data = cor_data, aes(label = sprintf("Correlation: %.2f", correlation)
 p
 
 ggsave(filename = title, path = plot_save_dir, plot = p, device = "pdf", scale = 1,width = 15, height = 15, units = "cm", dpi = 300)
-       
+
+to_file <- RNA_UMIs_aver_expr_common_cor  %>%
+  dplyr::select(Sample = Type, frac_cells_60, frac_cells)
+
+
+to_file <- to_file %>% left_join(cor_data[,c(1:2)], by = c("Sample" = "Type"))
+
+to_file <- to_file %>% mutate(Sample = case_when(Sample == "SDR002_60_60" ~ "SDR002_120",
+                                                 Sample == "SDR002_120_120" ~ "SDR002_240",
+                                                 Sample == "SDR002_240_240" ~ "SDR002_480"))
+
+file_name = "Fig2_M_d_Correlation_RNA_frac_cells_common.csv"
+write.csv(to_file, paste0(file_save_dir, "/", file_name), row.names = FALSE) 
+
+
+
+  
 
 
 ```
@@ -2145,6 +2452,17 @@ p <- pheatmap(RNA_UMIs_aver_expr_common_mat,
 ggsave(filename = "Heatmap_RNA_log1p_common_scaled.pdf", path = plot_save_dir, plot = p, device = "pdf", scale = 1,
        width = 15, height = 15, units = "cm", dpi = 300)
 
+
+
+to_file <- RNA_UMIs_aver_expr_common  %>%
+  dplyr::  select(Sample = Type, ID, avg_nUMIs_log1p)
+
+to_file <- to_file %>% mutate(Sample = case_when(Sample == "SDR002_60_60" ~ "SDR002_120",
+                                                 Sample == "SDR002_120_120" ~ "SDR002_240",
+                                                 Sample == "SDR002_240_240" ~ "SDR002_480"))
+
+file_name = "Fig2_M_j_Heatmap_RNA_log1p_common_scaled.csv"
+write.csv(to_file, paste0(file_save_dir, "/", file_name), row.names = FALSE)      
 
 
 ```

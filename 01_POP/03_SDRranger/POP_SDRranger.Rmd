@@ -1,5 +1,5 @@
 ---
-title: "20230710_SDR001_SDRranger"
+title: "20230710_POP_SDRranger"
 author: "Dominik Lindenhofer"
 date: "2023-07-10"
 output: html_document
@@ -29,6 +29,8 @@ library(pheatmap)
 library(here)
 
 plot_save_dir <- here("POP_plots")
+
+file_save_dir <- "/Users/dominik.lindenhofer/ownCloud/Shared_project_folder/Paper_drafts/2022_SDR_Paper/Source_data/Individual_files_all"
 path_dir_gDNA_reads <- here("SDRranger_gDNA_output/raw_reads_bc_matrix")
 path_dir_cDNA_reads <- here("SDRranger_cDNA_output/raw_reads_bc_matrix")
 path_dir_cDNA_umis <- here("SDRranger_cDNA_output/raw_umis_bc_matrix")
@@ -227,6 +229,17 @@ p <- cDNA_mat_reads_meta_wo_sbc %>%
     ggsave(filename = title, path = plot_save_dir, plot = p, device = "png", scale = 1,
        width = 15, height = 15, units = "cm", dpi = 300)
 
+cDNA_mat_reads_meta_wo_sbc_file <-  cDNA_mat_reads_meta_wo_sbc %>% 
+  arrange(desc(nReads_tot)) %>%
+  mutate(index = 1:nrow(cDNA_mat_reads_meta_wo_sbc))  %>%
+  dplyr::select(index, nReads_tot, cell)
+
+file_name = "Fig1_M_c_nReads_tot_ranked.csv"
+write.csv(cDNA_mat_reads_meta_wo_sbc_file, paste0(file_save_dir, "/", file_name), row.names = FALSE) 
+    
+
+
+    
 index_v_line <- cDNA_mat_reads_meta_wo_sbc %>%
 arrange(desc(nReads_RNA_wo_sbc)) %>%
   mutate(index = row_number()) %>%
@@ -451,7 +464,8 @@ metadata <- cDNA_data_Seurat@meta.data
 
 saveRDS(cDNA_data_Seurat, paste0(plot_save_dir,"/POP_Seurat_max_sbc_500reads_tot_cut.rds"))
 
-
+cDNA_data_Seurat <- readRDS(paste0(plot_save_dir,"/POP_Seurat_max_sbc_500reads_tot_cut.rds"))
+metadata <- cDNA_data_Seurat@meta.data
 #Set plot order in metadata
 
 order <- c("PFA", "Glyoxal")
@@ -788,6 +802,13 @@ ggsave(filename = title, path = plot_save_dir, plot = p, device = "pdf", scale =
        width = 30, height = 15, units = "cm", dpi = 300)
 
 
+to_file <- metadata %>% dplyr::select(cell, nCount_RNA, nReads_gDNA, nFeature_gDNA_perc)
+
+file_name = "Fig1_S1_c_nCount_RNA-nReads_gDNA-nFeature_gDNA_perc_gDNA.csv"
+write.csv(to_file, paste0(file_save_dir, "/", file_name), row.names = FALSE) 
+
+
+
 ```
 
 
@@ -818,6 +839,13 @@ p
 
 ggsave(filename = title, path = plot_save_dir, plot = p, device = "pdf", scale = 1,
        width = 30, height = 15, units = "cm", dpi = 300)
+
+
+
+to_file <- metadata %>% dplyr::select(cell, nCount_RNA, nReads_gDNA, nFeature_RNA_perc)
+
+file_name = "Fig1_S1_d_nCount_RNA-nReads_gDNA-nFeature_gDNA_perc_RNA.csv"
+write.csv(to_file, paste0(file_save_dir, "/", file_name), row.names = FALSE) 
 
 
 ```
@@ -868,9 +896,11 @@ cDNA_data_Seurat <- subset(x = cDNA_data_Seurat, subset = nReads_gDNA >= 100)
 cDNA_data_Seurat <- subset(x = cDNA_data_Seurat, subset = nReads_RNA >= 500)
 cDNA_data_Seurat <- subset(x = cDNA_data_Seurat, subset = nCount_RNA >= 100) 
 cDNA_data_Seurat <- subset(x = cDNA_data_Seurat, subset = nCount_RNA <= 2500) 
-cDNA_data_Seurat <- subset(x = cDNA_data_Seurat, subset = cDNA_ratio_sbc >= 0.8)
+cDNA_data_Seurat <- subset(x = cDNA_data_Seurat, subset = cDNA_ratio_sbc >= 0.9)
 
 saveRDS(cDNA_data_Seurat, paste0(plot_save_dir,"/POP_Seurat_filtered.rds"))
+
+cDNA_data_Seurat <- readRDS(paste0(plot_save_dir,"/POP_Seurat_filtered.rds"))
 
 #cDNA_data_Seurat <- subset(x = cDNA_data_Seurat, subset = nCount_RNA >= 100)
 
@@ -894,6 +924,8 @@ group_colors <- c(PFA = "#003f5c", Glyoxal = "#ffa600")
 
 metadata$nFeature_RNA_perc <- metadata$nFeature_RNA/30
 metadata$nFeature_gDNA_perc <- metadata$nFeature_gDNA/28
+
+summary(metadata$Type)
 
 ```
 
@@ -922,7 +954,42 @@ ggsave(filename = title, path = plot_save_dir, plot = p, device = "pdf", scale =
        width = 7, height = 15, units = "cm", dpi = 300)
 p
 
+
+to_file <- metadata %>% dplyr::select(cell, Type)
+
+file_name = "Fig1_M_d_NCells_per_Type_filtered.csv"
+write.csv(to_file, paste0(file_save_dir, "/", file_name), row.names = FALSE) 
+
+
 ```
+
+
+###Visualize number of cells - all
+
+```{r}
+
+title = "NCells_tot_filtered.pdf"
+p <- metadata %>%
+  	ggplot(aes(x=orig.ident, fill=orig.ident)) + 
+  	geom_bar() +
+  	theme_classic() +
+  	theme(axis.text.x = element_text(angle = 45, vjust = 1, hjust=1)) +
+    scale_y_continuous(limits = c(0,10000))+
+  	theme(plot.title = element_text(hjust=0.5, face="bold")) +
+  	ggtitle(title)+
+    labs(x = "Type", y = "Number of cells")+
+    #scale_fill_manual(values = group_colors)+
+    guides(fill = "none")
+
+
+ggsave(filename = title, path = plot_save_dir, plot = p, device = "pdf", scale = 1,
+       width = 5, height = 15, units = "cm", dpi = 300)
+p
+
+
+
+```
+
 
 
 
@@ -952,6 +1019,15 @@ ggsave(filename = title, path = plot_save_dir, plot = p, device = "pdf", scale =
        width = 10, height = 15, units = "cm", dpi = 300)
 
 p
+
+
+to_file <- metadata %>% dplyr::select(cell, nFeature_RNA_perc)
+
+file_name = "Fig1_M_j_nGenes_Violin_perc_filtered.csv"
+write.csv(to_file, paste0(file_save_dir, "/", file_name), row.names = FALSE) 
+
+
+
 
 ```
 
@@ -1010,6 +1086,11 @@ ggsave(filename = title, path = plot_save_dir, plot = p, device = "pdf", scale =
 
 p
 
+to_file <- metadata %>% dplyr::select(cell, nFeature_gDNA_perc)
+
+file_name = "Fig1_M_g_nAmplicons_Violin_perc_filtered.csv"
+write.csv(to_file, paste0(file_save_dir, "/", file_name), row.names = FALSE) 
+
 ```
 
 
@@ -1065,6 +1146,11 @@ ggsave(filename = title, path = plot_save_dir, plot = p, device = "pdf", scale =
        width = 10, height = 15, units = "cm", dpi = 300)
 
 p
+
+to_file <- metadata %>% dplyr::select(cell, nCount_RNA)
+
+file_name = "Fig1_M_k_nUMIs_Violin_filtered.csv"
+write.csv(to_file, paste0(file_save_dir, "/", file_name), row.names = FALSE) 
 
 ```
 
@@ -1126,6 +1212,13 @@ ggsave(filename = title, path = plot_save_dir, plot = p, device = "pdf", scale =
        width = 10, height = 15, units = "cm", dpi = 300)
 
 p
+
+
+
+to_file <- metadata %>% dplyr::select(cell, nReads_gDNA)
+
+file_name = "Fig1_M_h_nReads_gDNA_Violin_filtered.csv"
+write.csv(to_file, paste0(file_save_dir, "/", file_name), row.names = FALSE) 
 
 
 ```
@@ -1192,6 +1285,14 @@ ggsave(filename = title, path = plot_save_dir, plot = p, device = "pdf", scale =
        width = 10, height = 15, units = "cm", dpi = 300)
 
 
+to_file <- metadata %>% dplyr::select(cell, cDNA_ratio_sbc)
+
+file_name = "Fig1_M_e_cDNA_ratio_sbc_filtered.csv"
+write.csv(to_file, paste0(file_save_dir, "/", file_name), row.names = FALSE) 
+
+
+
+
 
 ```
 
@@ -1222,6 +1323,16 @@ p
 
 ggsave(filename = title, path = plot_save_dir, plot = p, device = "pdf", scale = 1,
        width = 30, height = 15, units = "cm", dpi = 300)
+
+
+
+
+to_file <- metadata %>% dplyr::select(cell, nCount_RNA, nReads_gDNA, nFeature_gDNA_perc)
+
+file_name = "Fig1_S1_e_nCount_RNA-nReads_gDNA-nFeature_gDNA_perc_gDNA_filtered.csv"
+write.csv(to_file, paste0(file_save_dir, "/", file_name), row.names = FALSE) 
+
+
 
 
 ```
@@ -1255,6 +1366,12 @@ ggsave(filename = title, path = plot_save_dir, plot = p, device = "pdf", scale =
        width = 30, height = 15, units = "cm", dpi = 300)
 
 
+to_file <- metadata %>% dplyr::select(cell, nCount_RNA, nReads_RNA, nFeature_gDNA_perc)
+
+file_name = "Fig1_S1_f_nCount_RNA-nReads_gDNA-nFeature_gDNA_perc_RNA_filtered.csv"
+write.csv(to_file, paste0(file_save_dir, "/", file_name), row.names = FALSE) 
+
+
 ```
 
 
@@ -1286,6 +1403,13 @@ ggsave(filename = title, path = plot_save_dir, plot = p, device = "pdf", scale =
        width = 30, height = 15, units = "cm", dpi = 300)
 
 
+
+to_file <- metadata %>% dplyr::select(cell, nCount_RNA, nReads_RNA, cDNA_ratio_sbc)
+
+file_name = "Fig1_M_f_nCount_RNA-nReads_gDNA-nFeature_gDNA_perc_sbc_filtered.csv"
+write.csv(to_file, paste0(file_save_dir, "/", file_name), row.names = FALSE) 
+
+
 ```
 
 
@@ -1296,6 +1420,8 @@ ggsave(filename = title, path = plot_save_dir, plot = p, device = "pdf", scale =
 ###Normalize, Variable features, scale data, PCA, Find Neighbors, 
 
 ```{r}
+
+cDNA_data_Seurat <- readRDS(paste0(plot_save_dir,"/POP_Seurat_filtered.rds"))
 
 #Normalize
 cDNA_data_Seurat <- NormalizeData(cDNA_data_Seurat, normalization.method = "LogNormalize", scale.factor = 10000)
@@ -1351,6 +1477,9 @@ group_colors <- c(PFA = "#003f5c", Glyoxal = "#ffa600")
 
 ```{r, fig.width = 4, fig.height = 3}
 
+
+
+
 title = "POP_UMAP_Type.pdf"
 p <- DimPlot(cDNA_data_Seurat, group.by = "Type", cols = group_colors) + NoLegend()
 
@@ -1359,6 +1488,14 @@ ggsave(filename = title, path = plot_save_dir, plot = p, device = "pdf", scale =
 
 p
 
+umap_coords <- Embeddings(cDNA_data_Seurat, reduction = "umap") %>% as.data.frame()
+umap_coords <- umap_coords %>% mutate(cell = rownames(umap_coords))
+to_add <- metadata %>% dplyr::select(cell, Type)
+to_file <- umap_coords %>% left_join(to_add, by = "cell")
+file_name = "Fig1_S2_b_POP_UMAP_Type.csv"
+write.csv(to_file, paste0(file_save_dir, "/", file_name), row.names = FALSE) 
+
+
 
 title = "POP_UMAP_Cluster.pdf"
 
@@ -1366,7 +1503,14 @@ p <- DimPlot(cDNA_data_Seurat, group.by = "seurat_clusters") + NoLegend()
 
 ggsave(filename = title, path = plot_save_dir, plot = p, device = "pdf", scale = 1,
        width = 15, height = 15, units = "cm", dpi = 300)
+p
 
+umap_coords <- Embeddings(cDNA_data_Seurat, reduction = "umap") %>% as.data.frame()
+umap_coords <- umap_coords %>% mutate(cell = rownames(umap_coords))
+to_add <- metadata %>% dplyr::select(cell, seurat_clusters)
+to_file <- umap_coords %>% left_join(to_add, by = "cell")
+file_name = "Fig1_S2_a_POP_UMAP_Cluster.csv"
+write.csv(to_file, paste0(file_save_dir, "/", file_name), row.names = FALSE) 
 
 
 
@@ -1454,6 +1598,28 @@ for (i in 1:length(all.genes)){
 
 
 
+#Save for source data
+umap_coords <- Embeddings(cDNA_data_Seurat, reduction = "umap") %>% as.data.frame()
+umap_coords <- umap_coords %>% mutate(cell = rownames(umap_coords))
+data <- GetAssayData(cDNA_data_Seurat, slot = "data") %>% t() %>% as.data.frame()
+data <- data %>% mutate(cell = rownames(data))
+
+
+to_filter <- c("GAPDH", "POU5F1", "SOX2", "KLF5", "SAL")
+
+to_add <- data %>% dplyr::select(cell, GAPDH, POU5F1, SOX2)
+to_file <- umap_coords %>% left_join(to_add, by = "cell")
+file_name = "Fig1_S2_c_POP_Genes_high.csv"
+write.csv(to_file, paste0(file_save_dir, "/", file_name), row.names = FALSE) 
+
+
+
+to_add <- data %>% dplyr::select(cell, KLF5, SALL4, ESRRB)
+to_file <- umap_coords %>% left_join(to_add, by = "cell")
+file_name = "Fig1_S2_d_POP_Genes_low.csv"
+write.csv(to_file, paste0(file_save_dir, "/", file_name), row.names = FALSE) 
+
+
 
 ```
 
@@ -1485,7 +1651,7 @@ nCells_Exp <- gDNA_mat_df_reshape %>% group_by(Type) %>% summarise(nCells = n_di
 gDNA_reads_aver_expr <- gDNA_mat_df_reshape %>% 
   dplyr::group_by(ID, Type) %>% 
   dplyr::summarize(avg_nReads = mean(nReads_gDNA),
-                   n_cells = sum(nReads_gDNA > 5), 
+                   n_cells = sum(nReads_gDNA > 10), 
                    .groups = "drop") %>% 
     dplyr::left_join(nCells_Exp, by = "Type") %>%
 dplyr::mutate(avg_nReads_log1p = log1p(avg_nReads),
@@ -1500,8 +1666,6 @@ gDNA_targets_annot <- gDNA_targets_annot %>% mutate(ID2 = str_c(seqnames, ":", s
 to_add <- gDNA_targets_annot %>% select(ID = name, ID2)
 
 gDNA_reads_aver_expr <- gDNA_reads_aver_expr %>% left_join(to_add, by = "ID")
-
-
 
 
 order = c("PFA", "Glyoxal")
@@ -1542,6 +1706,12 @@ ggsave(filename = title, path = plot_save_dir, plot = pl2, device = "pdf", scale
        width = 15, height = 18, units = "cm", dpi = 300)
 
 
+
+to_file <- gDNA_reads_aver_expr %>% dplyr::select(ID = ID2, Type, frac_cells, avg_nReads_log1p)
+file_name = "Fig1_M_i_Dot_plot_gDNA_expression-fraction.csv"
+write.csv(to_file, paste0(file_save_dir, "/", file_name), row.names = FALSE) 
+  
+  
 
 ```
 
@@ -1621,12 +1791,19 @@ pl2
 ggsave(filename = title, path = plot_save_dir, plot = pl2, device = "pdf", scale = 1,
        width = 10, height = 18, units = "cm", dpi = 300)
 
+
+
+to_file <- RNA_reads_aver_expr %>% dplyr::select(ID, Type, frac_cells, avg_nUMIs_log1p)
+
+file_name = "Fig1_M_l_Dot_plot_gDNA_expression-fraction.csv"
+write.csv(to_file, paste0(file_save_dir, "/", file_name), row.names = FALSE) 
+  
 ```
 
 
 
 
-### make more comparison plots - similar to SDR002
+### make more comparison plots 
 
 #Make plots for gDNA
 
@@ -1682,6 +1859,9 @@ ggsave(filename = title , path = plot_save_dir, plot = p, device = "pdf", scale 
 
 p
 
+to_file <- gDNA_reads_aver_expr %>% dplyr::select(ID, Type, frac_cells, avg_nReads_log1p)
+file_name = "Fig1_S1_g_gDNA_average_expression_vs_fract_cells_Exp_all.csv"
+write.csv(to_file, paste0(file_save_dir, "/", file_name), row.names = FALSE) 
 
 ```
 
@@ -1701,10 +1881,6 @@ gDNA_reads_aver_expr_fc <- gDNA_reads_aver_expr %>%
   ) %>%
   filter(!if_any(everything(), ~is.na(.) | is.infinite(.))) %>%
   ungroup()
-
-#Filter out Inf an NA
-
-
 
 
 title = "FC_gDNA_frac_cells-vs-FCS_gDNA_avg_nReads_commonn.pdf"
@@ -1729,6 +1905,10 @@ ggsave(filename = title , path = plot_save_dir, plot = p, device = "pdf", scale 
        width = 30, height = 15, units = "cm", dpi = 300)
 
 p
+
+to_file <- gDNA_reads_aver_expr_fc %>% dplyr::select(ID, Type, avg_nReads_log1p, frac_cells_fc, avg_nReads_fc) %>% filter(Type == "Glyoxal")
+file_name = "Fig1_S1_i_gDNA_average_expression_vs_fract_cells_Exp_all.csv"
+write.csv(to_file, paste0(file_save_dir, "/", file_name), row.names = FALSE) 
 
 
 
@@ -1894,7 +2074,7 @@ p
 
 
 
-#Dotplot - Correlation of Expression SDR60_60 vs SDR120 and SDR240
+#Dotplot - Correlation 
 
 
 ```{r, fig.width = 3, fig.height = 3}
@@ -2048,6 +2228,11 @@ ggsave(filename = title , path = plot_save_dir, plot = p, device = "pdf", scale 
 p
 
 
+to_file <- RNA_reads_aver_expr %>% dplyr::select(ID, Type, frac_cells, avg_nUMIs_log1p)
+file_name = "Fig1_S1_h_RNA_average_expression_vs_fract_cells_Exp_all.csv"
+write.csv(to_file, paste0(file_save_dir, "/", file_name), row.names = FALSE) 
+
+
 ```
 
 
@@ -2068,9 +2253,6 @@ RNA_reads_aver_expr_fc <- RNA_reads_aver_expr %>%
   ) %>%
   filter(!if_any(everything(), ~is.na(.) | is.infinite(.))) %>%
   ungroup()
-
-#Filter out Inf an NA
-
 
 
 
@@ -2097,6 +2279,10 @@ ggsave(filename = title , path = plot_save_dir, plot = p, device = "pdf", scale 
 
 p
 
+
+to_file <- RNA_reads_aver_expr_fc  %>% dplyr::select(ID, Type, avg_nUMIs_log1p, frac_cells_fc, avg_nUMIs_fc) %>% filter(Type == "Glyoxal")
+file_name = "Fig1_S1_j_FC_RNA_frac_cells-vs-FCS_gDNA_avg_nUMIs_commonn.csv"
+write.csv(to_file, paste0(file_save_dir, "/", file_name), row.names = FALSE) 
 
 
 ```
@@ -2357,6 +2543,8 @@ ggsave(filename = title, path = plot_save_dir, plot = p, device = "pdf", scale =
 
 ```{r}
 
+cDNA_data_Seurat <- readRDS("POP_plots/POP_Seurat_filtered_clustered.rds")
+metadata <- cDNA_data_Seurat@meta.data
 
 RNA_seq_iPSCs <- read.delim(here("Other_data/01_Bulk_RNA_seq_H9/RNA_seq_iPSCs_gene_list.txt"))
 RNA_seq_iPSCs <- read.delim(here("Other_data/01_Bulk_RNA_seq_H9/RNA_SEQ_H9_Phd.txt"))
@@ -2438,17 +2626,28 @@ ggsave(filename = "Comparison_RNA-seq_Heatmap.pdf", path = plot_save_dir, plot =
        width = 15, height = 15, units = "cm", dpi = 300)
 
 
+to_file <- RNA_to_plot_trans %>% mutate(Gene = rownames(RNA_to_plot_trans))
+file_name = "Fig1_M_m_Comparison_RNA-seq_Heatmap.csv"
+write.csv(to_file, paste0(file_save_dir, "/", file_name), row.names = FALSE) 
+
+
+
+
 ```
+
+
 
 #Make correlation plot for comparison with RNA-seq
 
-
 ```{r}
 
-#Use normalized reads here
-
+#Normalize SDR reads to 10000
 RNA_mat_df <- cDNA_data_Seurat@assays$RNA$counts %>% t() %>% as.data.frame()
-all.equal(metadata$cell, rownames(RNA_mat_df))
+total_reads_per_cell <- rowSums(RNA_mat_df)
+scaling_factor <- 10000 / total_reads_per_cell
+RNA_mat_df <- RNA_mat_df * scaling_factor
+
+#all.equal(metadata$cell, rownames(RNA_mat_df))
 
 RNA_mat_df <-  cbind(Type = metadata$Type, 
                       cell = metadata$cell, 
@@ -2471,8 +2670,8 @@ dplyr::mutate(avg_nUMIs_log1p = log1p(avg_nUMIs),
 
 
 
-RNA_P_G <- RNA_reads_aver_expr %>% select(ID, avg_nUMIs, Type)
-RNA_bulk <- RNA_seq_iPSCs_average %>% select(ID = Gene, avg_nUMIs = Average) %>% mutate(Type = "Bulk")
+RNA_P_G <- RNA_reads_aver_expr %>% dplyr::select(ID, avg_nUMIs, Type)
+RNA_bulk <- RNA_seq_iPSCs_average %>% dplyr::select(ID = Gene, avg_nUMIs = Average) %>% mutate(Type = "Bulk")
 #RNA_bulk$avg_nUMIs <-  RNA_bulk$avg_nUMIs/100
 RNA_to_plot <- rbind(RNA_bulk, RNA_P_G)
 
@@ -2490,18 +2689,33 @@ title = "Correlation_RNA_bulk_add_expression.pdf"
 p <- RNA_to_plot  %>%
 ggplot(aes(x = avg_nUMIs_bulk, y =  avg_nUMIs, color = Type)) +
   geom_point(size = 7) +
-  scale_color_manual(values = group_colors )+
-  #scale_x_discrete("") +
-  labs(x = "avg_nUMIs_bulk", y = "avg_nUMIs") +
-  scale_y_log10(limits = c(0.1, 10000)) +
-  scale_x_log10(limits = c(0.1, 10000)) +
+  scale_y_log10(breaks = c(1, 100, 10000),
+                labels = c(expression(10^0), expression(10^2), expression(10^4)),
+                limits = c(1, 15000)) +
+  scale_x_log10(breaks = c(1, 100, 10000),
+                labels = c(expression(10^0), expression(10^2), expression(10^4)),
+                limits = c(1, 15000)) +
+  scale_color_manual(values = c("Glyoxal" = "#ffa600", 
+                                "Bulk" = "grey42",
+                                "PFA" = "#003f5c"),
+                     labels = c("Bulk", "SDR: Glyoxal", "SDR: PFA")) +
+  labs(y = "Average expression (log10)", x = "Average expression - bulk (log10)",
+       title = "Comparison with bulk RNA-seq - Correlation",
+       color = "Dataset") +
 geom_smooth(method = "lm", se = FALSE, size = 1, aes(group = Type, color = Type)) +
-geom_text(data = cor_data, aes(label = sprintf("Correlation: %.2f", correlation)),
-            x = Inf, y = -Inf, hjust = 1, vjust = -2, size = 3, color = "black")+
+  theme(legend.position = "none",
+        legend.justification = "right",  
+        legend.title = element_blank(), 
+        panel.grid.major = element_blank(),
+        panel.grid.minor = element_blank(),
+        plot.margin = margin(5.5, 5.5, 5.5, 5.5, "pt"),
+        panel.border = element_blank(),
+        axis.line = element_line(color = "black")) +
   theme_classic()+
-   #facet_wrap(~orig.ident, ncol = 9)+
-  ggtitle(title)+
-  guides(color = FALSE)
+  guides(color = "none")+
+  annotate("text", x = 1, y = Inf, 
+           label = sprintf("bulk/SDR-glyoxal: %.2f\nbulk/SDR-PFA: %.2f\nbulk/bulk: %.2f", cor_data[2,2], cor_data[3,2], cor_data[1,2]),
+           hjust = 0, vjust = 1.1, size = 5, color = "black")
   
 
 p
@@ -2509,15 +2723,1238 @@ p
 ggsave(filename = title, path = plot_save_dir, plot = p, device = "pdf", scale = 1,width = 15, height = 15, units = "cm", dpi = 300)
 
 
+to_file <- RNA_to_plot %>% left_join(cor_data, by = c("Type"))
+file_name = "Fig1_M_n_Correlation_RNA_bulk_add_expression.csv"
+write.csv(to_file, paste0(file_save_dir, "/", file_name), row.names = FALSE) 
+
+
+```
+
+#Make input list for GATK variant caller
+
+
+#Generate file for splitting into individual cell bam files for GATK
+
+```{r}
+
+cDNA_data_Seurat <- readRDS("POP_plots/POP_Seurat_filtered_clustered.rds")
+
+metadata <- cDNA_data_Seurat@meta.data 
+
+meta_monov <- metadata %>% select(Index = cell, Cell_type = cell)
+
+#write.table(meta_monov, file =paste0(plot_save_dir,"/SDR005_Run1_MonoVar_cells.txt"), quote = FALSE, row.names = FALSE, col.names = FALSE, sep = "\t")
+#Need to make loop - sinto cant process so many cells at once
+
+library(here)
+out_dir <- here("POP_plots/01_Input_cells_txt/")
+
+
+# Set the batch size
+batch_size <- 500
+
+# Calculate the number of files needed
+num_files <- ceiling(nrow(meta_monov) / batch_size)
+
+# Loop through each batch and write to a file
+for (file_num in 1:num_files) {
+  # Calculate row indices for the current batch
+  start_row <- (file_num - 1) * batch_size + 1
+  end_row <- min(file_num * batch_size, nrow(meta_monov))
+  
+  # Create a file name for the current batch
+  file_name <- paste0(out_dir, "Batch_", file_num, ".txt")
+  
+  # Write the current batch of rows to a file
+  write.table(meta_monov[start_row:end_row, ], file = file_name, quote = FALSE, row.names = FALSE, col.names = FALSE, sep = "\t")
+}
+
+here()
+
+```
+
+
+#For Review 1
+
+
+###General
+```{r}
+group_colors <- c(PFA = "#003f5c", Glyoxal = "#ffa600")
+
+plot_save_dir <- "/Users/dominik.lindenhofer/Documents/Data_Local/202208_POP/POP_review_plots"
+
+```
+
+
+#Determine doublet rates
 
 
 
+#For RNA reads
+```{r}
+
+#Load data post-cutoff
+
+cDNA_data_Seurat <- readRDS("POP_plots/POP_Seurat_filtered_clustered.rds")
+
+#Adjust cutoff of cDNA ratio
+cDNA_data_Seurat <- subset(x = cDNA_data_Seurat, subset = cDNA_ratio_sbc >= 0.9)
+
+
+metadata <- cDNA_data_Seurat@meta.data
+
+cells <- metadata$cell
+cells_g <- paste0(cells, ":Glyoxal")
+cells_p <-paste0(cells, ":PFA")
+  
+  
+#Load original matrices again
+
+#In POP a mix of both primers was used for RT - both expected to be found per cell then - need to merge cells for this then 
+
+#load read data sets 
+cDNA_data_features_reads <- read.delim(paste0(path_dir_cDNA_reads,"/features.tsv.gz"), header = FALSE) %>% dplyr::pull(1)
+cDNA_data_features_reads <- sub("_chrom", "\\1", cDNA_data_features_reads)
+cDNA_data_barcodes_reads <- read.delim(paste0(path_dir_cDNA_reads, "/barcodes.tsv.gz"), header = FALSE) %>% dplyr::pull(1)
+cDNA_mat_reads <- readMM(paste0(path_dir_cDNA_reads, "/matrix.mtx.gz"))
+dimnames(cDNA_mat_reads) <- list(cDNA_data_features_reads, cDNA_data_barcodes_reads)
+
+
+#summarize both sbc barcodes per cell - otherwise to many cells found and sbc ratio is off
+
+#Split sample BC info and assign
+  
+cell_id_split <- data.frame(do.call('rbind', strsplit(as.character(cDNA_data_barcodes_reads),':',fixed=TRUE)))
+colnames(cell_id_split) <- c("cell", "sbc")
+cell_id_split$index <- 1:nrow(cell_id_split)
+
+
+#Rename barcodes for merging cells
+
+cDNA_data_barcodes_reads <- sub(":TCGCCTTA", ":PFA", cDNA_data_barcodes_reads)
+cDNA_data_barcodes_reads <- sub(":CTAGTACG", ":PFA", cDNA_data_barcodes_reads)
+cDNA_data_barcodes_reads <- sub(":TTCTGCCT", ":Glyoxal", cDNA_data_barcodes_reads)
+cDNA_data_barcodes_reads <- sub(":GCTCAGGA", ":Glyoxal", cDNA_data_barcodes_reads)
+
+dimnames(cDNA_mat_reads) <- list(cDNA_data_features_reads, cDNA_data_barcodes_reads)
+
+# Identify unique barcodes and their indices
+unique_barcodes <- unique(cDNA_data_barcodes_reads)
+barcode_indices <- match(cDNA_data_barcodes_reads, unique_barcodes)
+
+
+# Assuming `barcode_indices` maps each column to a unique barcode group
+n <- length(cDNA_data_barcodes_reads)  # Number of original columns
+m <- length(unique_barcodes)  # Number of unique barcodes (aggregated columns)
+
+# Create the mapping matrix
+# Rows correspond to original columns, columns to aggregated groups
+mapping_matrix <- sparseMatrix(i = 1:n, j = barcode_indices, x = rep(1, n), dims = c(n, m))
+
+# Assuming `cDNA_mat_reads_sub` is your original sparse matrix
+cDNA_mat_reads_agg <- cDNA_mat_reads %*% mapping_matrix
+
+# Assign dimnames to the new matrix
+dimnames(cDNA_mat_reads_agg) <- list(cDNA_data_features_reads, unique_barcodes)
+
+
+#Subset the matrix 
+
+cDNA_mat_reads_g <- cDNA_mat_reads_agg[,cells_g]
+cDNA_mat_reads_p <- cDNA_mat_reads_agg[,cells_p]
+
+#Summarize reads/cell for each 
+cDNA_mat_reads_g_sum <- colSums(cDNA_mat_reads_g) %>% as.data.frame() %>% dplyr::rename("nReads_RNA_g" = ".")
+cDNA_mat_reads_p_sum <- colSums(cDNA_mat_reads_p)  %>% as.data.frame()  %>% dplyr::rename("nReads_RNA_p" = ".")
 
 
 
-       
+#Annotate and combine
+cDNA_mat_reads_g_sum <-cDNA_mat_reads_g_sum %>% mutate(cell_id = rownames(cDNA_mat_reads_g_sum)) %>% tidyr::separate(cell_id, into = c("cell", "Type"), sep = ":", fill = "right")
+cDNA_mat_reads_p_sum <-cDNA_mat_reads_p_sum %>% mutate(cell_id = rownames(cDNA_mat_reads_g_sum)) %>% tidyr::separate(cell_id, into = c("cell", "Type"), sep = ":", fill = "right")
+
+cDNA_mat_reads_sum_comb <- cDNA_mat_reads_g_sum %>% full_join(cDNA_mat_reads_p_sum, by = "cell")
+
+#Add metadata
+cDNA_mat_reads_sum_comb <- cDNA_mat_reads_sum_comb %>% left_join(metadata, by = "cell")
+
+#Plot
+
+
+title = "nReads_PFA_vs_nReads_Glyoxal_filtered.pdf"
+p <- cDNA_mat_reads_sum_comb %>% 
+  	ggplot(aes(x=nReads_RNA_g, y=nReads_RNA_p, color=Type)) + 
+  	geom_point(size = 1) + 
+	#scale_colour_gradient(low = "gray90", high = "#990000", limits = c(0,1)) +
+  #xlim(c(0,30))+
+    #ylim(c(0,30))+
+  	#scale_x_log10(limits = c(1,10000)) + 
+  	#scale_y_log10(limits = c(1,10000)) + 
+    scale_y_continuous(limits = c(0,10000))+
+    scale_x_continuous(limits = c(0,10000))+
+  	theme_classic() +
+  	#geom_vline(xintercept = 10) +
+  	#geom_hline(yintercept = 10) +
+    	theme(plot.title = element_text(hjust=0.5, face="bold")) +
+      labs(x = "nReads/cell (Glyoxal)", y =  "nReads/cell (PFA)")+
+    	#facet_wrap(~Type)+
+        scale_color_manual(values = group_colors)+
+  guides(color = "none")+
+  	ggtitle(title)
+
+
+p
+
+ggsave(filename = title, path = plot_save_dir, plot = p, device = "pdf", scale = 1,
+       width = 15, height = 15, units = "cm", dpi = 300)
+
+
+
+                            
 
 ```
 
 
 
+
+
+#For UMIs
+```{r}
+
+
+#Load data post-cutoff
+
+cDNA_data_Seurat <- readRDS("POP_plots/POP_Seurat_filtered_clustered.rds")
+
+#Adjust cutoff of cDNA ratio
+cDNA_data_Seurat <- subset(x = cDNA_data_Seurat, subset = cDNA_ratio_sbc >= 0.9)
+
+
+metadata <- cDNA_data_Seurat@meta.data
+
+cells <- metadata$cell
+cells_g <- paste0(cells, ":Glyoxal")
+cells_p <-paste0(cells, ":PFA")
+  
+  
+#Load original matrices again
+
+#In POP a mix of both primers was used for RT - both expected to be found per cell then - need to merge cells for this then 
+#Laod matrix - umis
+cDNA_data_features_umis <- read.delim(paste0(path_dir_cDNA_umis, "/features.tsv.gz"), header = FALSE) %>% dplyr::pull(1)
+cDNA_data_features_umis <- sub("_chrom", "\\1", cDNA_data_features_umis)
+cDNA_data_barcodes_umis <- read.delim(paste0(path_dir_cDNA_umis, "/barcodes.tsv.gz"), header = FALSE) %>% dplyr::pull(1)
+cDNA_mat <- readMM(paste0(path_dir_cDNA_umis, "/matrix.mtx.gz"))
+cDNA_data_features_umis <- sub("_gene", "\\1", cDNA_data_features_umis)
+dimnames(cDNA_mat) <- list(cDNA_data_features_umis, cDNA_data_barcodes_umis)
+
+#summarize both sbc barcodes per cell - otherwise to many cells found and sbc ratio is off
+
+#Split sample BC info and assign
+  
+cell_id_split <- data.frame(do.call('rbind', strsplit(as.character(cDNA_data_barcodes_umis),':',fixed=TRUE)))
+colnames(cell_id_split) <- c("cell", "sbc")
+cell_id_split$index <- 1:nrow(cell_id_split)
+
+
+#Rename barcodes for merging cells
+
+cDNA_data_barcodes_umis <- sub(":TCGCCTTA", ":PFA", cDNA_data_barcodes_umis)
+cDNA_data_barcodes_umis <- sub(":CTAGTACG", ":PFA", cDNA_data_barcodes_umis)
+cDNA_data_barcodes_umis <- sub(":TTCTGCCT", ":Glyoxal", cDNA_data_barcodes_umis)
+cDNA_data_barcodes_umis <- sub(":GCTCAGGA", ":Glyoxal", cDNA_data_barcodes_umis)
+
+dimnames(cDNA_mat) <- list(cDNA_data_features_umis, cDNA_data_barcodes_umis)
+
+# Identify unique barcodes and their indices
+unique_barcodes <- unique(cDNA_data_barcodes_umis)
+barcode_indices <- match(cDNA_data_barcodes_umis, unique_barcodes)
+
+
+# Assuming `barcode_indices` maps each column to a unique barcode group
+n <- length(cDNA_data_barcodes_umis)  # Number of original columns
+m <- length(unique_barcodes)  # Number of unique barcodes (aggregated columns)
+
+# Create the mapping matrix
+# Rows correspond to original columns, columns to aggregated groups
+mapping_matrix <- sparseMatrix(i = 1:n, j = barcode_indices, x = rep(1, n), dims = c(n, m))
+
+# Assuming `cDNA_mat_umis_sub` is your original sparse matrix
+cDNA_mat_agg <- cDNA_mat %*% mapping_matrix
+
+# Assign dimnames to the new matrix
+dimnames(cDNA_mat_agg) <- list(cDNA_data_features_umis, unique_barcodes)
+
+
+#Subset the matrix 
+
+cDNA_mat_g <- cDNA_mat_agg[,cells_g]
+cDNA_mat_p <- cDNA_mat_agg[,cells_p]
+
+#Summarize reads/cell for each 
+cDNA_mat_g_sum <- colSums(cDNA_mat_g) %>% as.data.frame() %>% dplyr::rename("nCount_g" = ".")
+cDNA_mat_p_sum <- colSums(cDNA_mat_p)  %>% as.data.frame()  %>% dplyr::rename("nCount_p" = ".")
+
+
+
+#Annotate and combine
+cDNA_mat_g_sum <-cDNA_mat_g_sum %>% mutate(cell_id = rownames(cDNA_mat_g_sum)) %>% tidyr::separate(cell_id, into = c("cell", "Type"), sep = ":", fill = "right")
+cDNA_mat_p_sum <-cDNA_mat_p_sum %>% mutate(cell_id = rownames(cDNA_mat_g_sum)) %>% tidyr::separate(cell_id, into = c("cell", "Type"), sep = ":", fill = "right")
+
+cDNA_mat_sum_comb <- cDNA_mat_g_sum %>% full_join(cDNA_mat_p_sum, by = "cell")
+
+#Add metadata
+cDNA_mat_sum_comb <- cDNA_mat_sum_comb %>% left_join(metadata, by = "cell")
+
+#Plot
+
+
+title = "nCount_PFA_vs_nCount_Glyoxal_filtered.pdf"
+p <- cDNA_mat_sum_comb %>% 
+  	ggplot(aes(x=nCount_g, y=nCount_p, color=Type)) + 
+  	geom_point(size = 1) + 
+	#scale_colour_gradient(low = "gray90", high = "#990000", limits = c(0,1)) +
+  #xlim(c(0,30))+
+    #ylim(c(0,30))+
+  	#scale_x_log10(limits = c(1,10000)) + 
+  	#scale_y_log10(limits = c(1,10000)) + 
+    scale_y_continuous(limits = c(0,4000))+
+    scale_x_continuous(limits = c(0,4000))+
+  	theme_classic() +
+  	#geom_vline(xintercept = 10) +
+  	#geom_hline(yintercept = 10) +
+    	theme(plot.title = element_text(hjust=0.5, face="bold")) +
+      labs(x = "nUMIs/cell (Glyoxal)", y =  "nUMIs/cell (PFA)")+
+    	#facet_wrap(~Type)+
+        scale_color_manual(values = group_colors)+
+  guides(color = "none")+
+  	ggtitle(title)
+
+
+p
+
+ggsave(filename = title, path = plot_save_dir, plot = p, device = "pdf", scale = 1,
+       width = 15, height = 15, units = "cm", dpi = 300)
+
+
+
+                        
+```
+
+
+
+#Make plots but without doublet cDNA_subset step 
+
+
+
+
+#For RNA reads
+```{r}
+
+group_colors <- c(PFA = "#003f5c", Glyoxal = "#ffa600", Doublet = "grey")
+
+#Load data pre-cutoff 
+
+cDNA_data_Seurat <- readRDS("POP_plots/POP_Seurat_max_sbc_500reads_tot_cut.rds")
+
+
+#Apply same cutoffs as above but without the cDNA_ratio_cut
+#cDNA_data_Seurat <- subset(x = cDNA_data_Seurat, subset = cDNA_ratio_sbc >= 0.9)
+cDNA_data_Seurat <- subset(x = cDNA_data_Seurat, subset = nFeature_RNA >= 12)
+cDNA_data_Seurat <- subset(x = cDNA_data_Seurat, subset = nFeature_gDNA >= 20)
+cDNA_data_Seurat <- subset(x = cDNA_data_Seurat, subset = nReads_gDNA >= 100)
+cDNA_data_Seurat <- subset(x = cDNA_data_Seurat, subset = nReads_RNA >= 500)
+cDNA_data_Seurat <- subset(x = cDNA_data_Seurat, subset = nCount_RNA >= 100) 
+cDNA_data_Seurat <- subset(x = cDNA_data_Seurat, subset = nCount_RNA <= 2500) 
+
+
+
+metadata <- cDNA_data_Seurat@meta.data
+
+cells <- metadata$cell
+cells_g <- paste0(cells, ":Glyoxal")
+cells_p <-paste0(cells, ":PFA")
+  
+  
+#Load original matrices again
+
+#In POP a mix of both primers was used for RT - both expected to be found per cell then - need to merge cells for this then 
+
+#load read data sets 
+cDNA_data_features_reads <- read.delim(paste0(path_dir_cDNA_reads,"/features.tsv.gz"), header = FALSE) %>% dplyr::pull(1)
+cDNA_data_features_reads <- sub("_chrom", "\\1", cDNA_data_features_reads)
+cDNA_data_barcodes_reads <- read.delim(paste0(path_dir_cDNA_reads, "/barcodes.tsv.gz"), header = FALSE) %>% dplyr::pull(1)
+cDNA_mat_reads <- readMM(paste0(path_dir_cDNA_reads, "/matrix.mtx.gz"))
+dimnames(cDNA_mat_reads) <- list(cDNA_data_features_reads, cDNA_data_barcodes_reads)
+
+
+#summarize both sbc barcodes per cell - otherwise to many cells found and sbc ratio is off
+
+#Split sample BC info and assign
+  
+cell_id_split <- data.frame(do.call('rbind', strsplit(as.character(cDNA_data_barcodes_reads),':',fixed=TRUE)))
+colnames(cell_id_split) <- c("cell", "sbc")
+cell_id_split$index <- 1:nrow(cell_id_split)
+
+
+#Rename barcodes for merging cells
+
+cDNA_data_barcodes_reads <- sub(":TCGCCTTA", ":PFA", cDNA_data_barcodes_reads)
+cDNA_data_barcodes_reads <- sub(":CTAGTACG", ":PFA", cDNA_data_barcodes_reads)
+cDNA_data_barcodes_reads <- sub(":TTCTGCCT", ":Glyoxal", cDNA_data_barcodes_reads)
+cDNA_data_barcodes_reads <- sub(":GCTCAGGA", ":Glyoxal", cDNA_data_barcodes_reads)
+
+dimnames(cDNA_mat_reads) <- list(cDNA_data_features_reads, cDNA_data_barcodes_reads)
+
+# Identify unique barcodes and their indices
+unique_barcodes <- unique(cDNA_data_barcodes_reads)
+barcode_indices <- match(cDNA_data_barcodes_reads, unique_barcodes)
+
+
+# Assuming `barcode_indices` maps each column to a unique barcode group
+n <- length(cDNA_data_barcodes_reads)  # Number of original columns
+m <- length(unique_barcodes)  # Number of unique barcodes (aggregated columns)
+
+# Create the mapping matrix
+# Rows correspond to original columns, columns to aggregated groups
+mapping_matrix <- sparseMatrix(i = 1:n, j = barcode_indices, x = rep(1, n), dims = c(n, m))
+
+# Assuming `cDNA_mat_reads_sub` is your original sparse matrix
+cDNA_mat_reads_agg <- cDNA_mat_reads %*% mapping_matrix
+
+# Assign dimnames to the new matrix
+dimnames(cDNA_mat_reads_agg) <- list(cDNA_data_features_reads, unique_barcodes)
+
+
+#Subset the matrix 
+
+cDNA_mat_reads_g <- cDNA_mat_reads_agg[,cells_g]
+cDNA_mat_reads_p <- cDNA_mat_reads_agg[,cells_p]
+
+#Summarize reads/cell for each 
+cDNA_mat_reads_g_sum <- colSums(cDNA_mat_reads_g) %>% as.data.frame() %>% dplyr::rename("nReads_RNA_g" = ".")
+cDNA_mat_reads_p_sum <- colSums(cDNA_mat_reads_p)  %>% as.data.frame()  %>% dplyr::rename("nReads_RNA_p" = ".")
+
+
+
+#Annotate and combine
+cDNA_mat_reads_g_sum <-cDNA_mat_reads_g_sum %>% mutate(cell_id = rownames(cDNA_mat_reads_g_sum)) %>% tidyr::separate(cell_id, into = c("cell", "Type"), sep = ":", fill = "right")
+cDNA_mat_reads_p_sum <-cDNA_mat_reads_p_sum %>% mutate(cell_id = rownames(cDNA_mat_reads_g_sum)) %>% tidyr::separate(cell_id, into = c("cell", "Type"), sep = ":", fill = "right")
+
+cDNA_mat_reads_sum_comb <- cDNA_mat_reads_g_sum %>% full_join(cDNA_mat_reads_p_sum, by = "cell")
+
+#Add metadata
+cDNA_mat_reads_sum_comb <- cDNA_mat_reads_sum_comb %>% left_join(metadata, by = "cell")
+
+#Annotate the doublets 
+
+cDNA_mat_reads_sum_comb <- cDNA_mat_reads_sum_comb %>% mutate(Type = if_else(cDNA_ratio_sbc >0.9, Type, "Doublet"))
+
+
+
+#Plot
+
+
+title = "nReads_PFA_vs_nReads_Glyoxal_wo_sbc_ratio_cut.pdf"
+p <- cDNA_mat_reads_sum_comb %>% 
+  	ggplot(aes(x=nReads_RNA_g, y=nReads_RNA_p, color=Type)) + 
+  	geom_point(size = 1) + 
+	#scale_colour_gradient(low = "gray90", high = "#990000", limits = c(0,1)) +
+  #xlim(c(0,30))+
+    #ylim(c(0,30))+
+  	#scale_x_log10(limits = c(1,10000)) + 
+  	#scale_y_log10(limits = c(1,10000)) + 
+    scale_y_continuous(limits = c(0,10000))+
+    scale_x_continuous(limits = c(0,10000))+
+  	theme_classic() +
+  	#geom_vline(xintercept = 10) +
+  	#geom_hline(yintercept = 10) +
+    	theme(plot.title = element_text(hjust=0.5, face="bold")) +
+      labs(x = "nReads/cell (Glyoxal)", y =  "nReads/cell (PFA)")+
+    	#facet_wrap(~Type)+
+        scale_color_manual(values = group_colors)+
+  guides(color = "none")+
+  	ggtitle(title)
+
+
+p
+
+ggsave(filename = title, path = plot_save_dir, plot = p, device = "pdf", scale = 1,
+       width = 15, height = 15, units = "cm", dpi = 300)
+
+
+
+to_file <- cDNA_mat_reads_sum_comb %>% dplyr::select(cell, Type, nReads_RNA_Glyoxal = nReads_RNA_g,  nReads_RNA_PFA = nReads_RNA_p )
+file_name = "Fig1_S1_b_nReads_PFA_vs_nReads_Glyoxal_wo_sbc_ratio_cut.csv"
+write.csv(to_file, paste0(file_save_dir, "/", file_name), row.names = FALSE) 
+
+                          
+```
+#Make bargraph of doublets
+
+```{r}
+
+
+to_order <- c("PFA", "Glyoxal", "Doublet")
+
+cDNA_mat_reads_sum_comb$Type <- factor(cDNA_mat_reads_sum_comb$Type, levels = to_order)
+
+title = "NCells_per_Type_with_Doublets.pdf"
+p <-  cDNA_mat_reads_sum_comb %>%
+  mutate(Experiment = "POP") %>%
+  	ggplot(aes(x=Experiment, fill=Type)) + 
+  	geom_bar() +
+  	theme_classic() +
+  	theme(axis.text.x = element_text(angle = 45, vjust = 1, hjust=1)) +
+    scale_y_continuous(limits = c(0,12000))+
+  	theme(plot.title = element_text(hjust=0.5, face="bold")) +
+  	ggtitle(title)+
+    labs(x = "Type", y = "Number of cells")+
+    scale_fill_manual(values = group_colors)+
+    guides(fill = "none")
+
+
+ggsave(filename = title, path = plot_save_dir, plot = p, device = "pdf", scale = 1,
+       width = 5, height = 15, units = "cm", dpi = 300)
+p
+
+
+
+
+
+```
+
+
+
+#For UMIs
+```{r}
+
+
+group_colors <- c(PFA = "#003f5c", Glyoxal = "#ffa600", Doublet = "grey")
+
+#Load data pre-cutoff 
+
+cDNA_data_Seurat <- readRDS("POP_plots/POP_Seurat_max_sbc_500reads_tot_cut.rds")
+
+
+#Apply same cutoffs as above but without the cDNA_ratio_cut
+#cDNA_data_Seurat <- subset(x = cDNA_data_Seurat, subset = cDNA_ratio_sbc >= 0.9)
+cDNA_data_Seurat <- subset(x = cDNA_data_Seurat, subset = nFeature_RNA >= 12)
+cDNA_data_Seurat <- subset(x = cDNA_data_Seurat, subset = nFeature_gDNA >= 20)
+cDNA_data_Seurat <- subset(x = cDNA_data_Seurat, subset = nReads_gDNA >= 100)
+cDNA_data_Seurat <- subset(x = cDNA_data_Seurat, subset = nReads_RNA >= 500)
+cDNA_data_Seurat <- subset(x = cDNA_data_Seurat, subset = nCount_RNA >= 100) 
+cDNA_data_Seurat <- subset(x = cDNA_data_Seurat, subset = nCount_RNA <= 2500) 
+
+
+
+metadata <- cDNA_data_Seurat@meta.data
+
+cells <- metadata$cell
+cells_g <- paste0(cells, ":Glyoxal")
+cells_p <-paste0(cells, ":PFA")
+
+  
+  
+#Load original matrices again
+
+#In POP a mix of both primers was used for RT - both expected to be found per cell then - need to merge cells for this then 
+#Laod matrix - umis
+cDNA_data_features_umis <- read.delim(paste0(path_dir_cDNA_umis, "/features.tsv.gz"), header = FALSE) %>% dplyr::pull(1)
+cDNA_data_features_umis <- sub("_chrom", "\\1", cDNA_data_features_umis)
+cDNA_data_barcodes_umis <- read.delim(paste0(path_dir_cDNA_umis, "/barcodes.tsv.gz"), header = FALSE) %>% dplyr::pull(1)
+cDNA_mat <- readMM(paste0(path_dir_cDNA_umis, "/matrix.mtx.gz"))
+cDNA_data_features_umis <- sub("_gene", "\\1", cDNA_data_features_umis)
+dimnames(cDNA_mat) <- list(cDNA_data_features_umis, cDNA_data_barcodes_umis)
+
+#summarize both sbc barcodes per cell - otherwise to many cells found and sbc ratio is off
+
+#Split sample BC info and assign
+  
+cell_id_split <- data.frame(do.call('rbind', strsplit(as.character(cDNA_data_barcodes_umis),':',fixed=TRUE)))
+colnames(cell_id_split) <- c("cell", "sbc")
+cell_id_split$index <- 1:nrow(cell_id_split)
+
+
+#Rename barcodes for merging cells
+
+cDNA_data_barcodes_umis <- sub(":TCGCCTTA", ":PFA", cDNA_data_barcodes_umis)
+cDNA_data_barcodes_umis <- sub(":CTAGTACG", ":PFA", cDNA_data_barcodes_umis)
+cDNA_data_barcodes_umis <- sub(":TTCTGCCT", ":Glyoxal", cDNA_data_barcodes_umis)
+cDNA_data_barcodes_umis <- sub(":GCTCAGGA", ":Glyoxal", cDNA_data_barcodes_umis)
+
+dimnames(cDNA_mat) <- list(cDNA_data_features_umis, cDNA_data_barcodes_umis)
+
+# Identify unique barcodes and their indices
+unique_barcodes <- unique(cDNA_data_barcodes_umis)
+barcode_indices <- match(cDNA_data_barcodes_umis, unique_barcodes)
+
+
+# Assuming `barcode_indices` maps each column to a unique barcode group
+n <- length(cDNA_data_barcodes_umis)  # Number of original columns
+m <- length(unique_barcodes)  # Number of unique barcodes (aggregated columns)
+
+# Create the mapping matrix
+# Rows correspond to original columns, columns to aggregated groups
+mapping_matrix <- sparseMatrix(i = 1:n, j = barcode_indices, x = rep(1, n), dims = c(n, m))
+
+# Assuming `cDNA_mat_umis_sub` is your original sparse matrix
+cDNA_mat_agg <- cDNA_mat %*% mapping_matrix
+
+# Assign dimnames to the new matrix
+dimnames(cDNA_mat_agg) <- list(cDNA_data_features_umis, unique_barcodes)
+
+
+#Subset the matrix 
+
+cDNA_mat_g <- cDNA_mat_agg[,cells_g]
+cDNA_mat_p <- cDNA_mat_agg[,cells_p]
+
+#Summarize reads/cell for each 
+cDNA_mat_g_sum <- colSums(cDNA_mat_g) %>% as.data.frame() %>% dplyr::rename("nCount_g" = ".")
+cDNA_mat_p_sum <- colSums(cDNA_mat_p)  %>% as.data.frame()  %>% dplyr::rename("nCount_p" = ".")
+
+
+
+#Annotate and combine
+cDNA_mat_g_sum <-cDNA_mat_g_sum %>% mutate(cell_id = rownames(cDNA_mat_g_sum)) %>% tidyr::separate(cell_id, into = c("cell", "Type"), sep = ":", fill = "right")
+cDNA_mat_p_sum <-cDNA_mat_p_sum %>% mutate(cell_id = rownames(cDNA_mat_g_sum)) %>% tidyr::separate(cell_id, into = c("cell", "Type"), sep = ":", fill = "right")
+
+cDNA_mat_sum_comb <- cDNA_mat_g_sum %>% full_join(cDNA_mat_p_sum, by = "cell")
+
+#Add metadata
+cDNA_mat_sum_comb <- cDNA_mat_sum_comb %>% left_join(metadata, by = "cell")
+
+#Annotate the doublets 
+
+cDNA_mat_sum_comb <- cDNA_mat_sum_comb %>% mutate(Type = if_else(cDNA_ratio_sbc >0.9, Type, "Doublet"))
+
+#Plot
+
+
+title = "nCount_PFA_vs_nCount_Glyoxal_wo_sbc_ratio_cut.pdf"
+p <- cDNA_mat_sum_comb %>% 
+  	ggplot(aes(x=nCount_g, y=nCount_p, color=Type)) + 
+  	geom_point(size = 1) + 
+	#scale_colour_gradient(low = "gray90", high = "#990000", limits = c(0,1)) +
+  #xlim(c(0,30))+
+    #ylim(c(0,30))+
+  	#scale_x_log10(limits = c(1,10000)) + 
+  	#scale_y_log10(limits = c(1,10000)) + 
+    scale_y_continuous(limits = c(0,4000))+
+    scale_x_continuous(limits = c(0,4000))+
+  	theme_classic() +
+  	#geom_vline(xintercept = 10) +
+  	#geom_hline(yintercept = 10) +
+    	theme(plot.title = element_text(hjust=0.5, face="bold")) +
+      labs(x = "nUMIs/cell (Glyoxal)", y =  "nUMIs/cell (PFA)")+
+    	#facet_wrap(~Type)+
+        scale_color_manual(values = group_colors)+
+  guides(color = "none")+
+  	ggtitle(title)
+
+
+p
+
+ggsave(filename = title, path = plot_save_dir, plot = p, device = "pdf", scale = 1,
+       width = 15, height = 15, units = "cm", dpi = 300)
+
+
+
+                        
+```
+
+
+
+
+
+
+
+
+
+
+
+#Compare cutoffs 
+
+
+
+```{r}
+
+data_dir <- "/Users/dominik.lindenhofer/Documents/Data_Local/202208_POP/POP_plots/POP_Seurat_max_sbc_500reads_tot_cut.rds"
+
+cDNA_data_Seurat_wo_sbc <- readRDS(data_dir)
+
+
+#Apply same cutoffs as above but without the cDNA_ratio_cut
+#cDNA_data_Seurat_wo_sbc <- subset(x = cDNA_data_Seurat_wo_sbc, subset = cDNA_ratio_sbc >= 0.9)
+cDNA_data_Seurat_wo_sbc <- subset(x = cDNA_data_Seurat_wo_sbc, subset = nFeature_RNA >= 12)
+cDNA_data_Seurat_wo_sbc <- subset(x = cDNA_data_Seurat_wo_sbc, subset = nFeature_gDNA >= 20)
+cDNA_data_Seurat_wo_sbc <- subset(x = cDNA_data_Seurat_wo_sbc, subset = nReads_gDNA >= 100)
+cDNA_data_Seurat_wo_sbc <- subset(x = cDNA_data_Seurat_wo_sbc, subset = nReads_RNA >= 500)
+cDNA_data_Seurat_wo_sbc <- subset(x = cDNA_data_Seurat_wo_sbc, subset = nCount_RNA >= 100) 
+cDNA_data_Seurat_wo_sbc <- subset(x = cDNA_data_Seurat_wo_sbc, subset = nCount_RNA <= 2500) 
+
+nCells_wo_sbc <- length(colnames(cDNA_data_Seurat_wo_sbc))
+
+
+
+cDNA_data_Seurat <- readRDS(data_dir)
+
+
+#Apply same cutoffs as above but without the cDNA_ratio_cut
+cDNA_data_Seurat <- subset(x = cDNA_data_Seurat, subset = cDNA_ratio_sbc >= 0.9)
+cDNA_data_Seurat <- subset(x = cDNA_data_Seurat, subset = nFeature_RNA >= 12)
+cDNA_data_Seurat <- subset(x = cDNA_data_Seurat, subset = nFeature_gDNA >= 20)
+cDNA_data_Seurat <- subset(x = cDNA_data_Seurat, subset = nReads_gDNA >= 100)
+cDNA_data_Seurat <- subset(x = cDNA_data_Seurat, subset = nReads_RNA >= 500)
+cDNA_data_Seurat <- subset(x = cDNA_data_Seurat, subset = nCount_RNA >= 100) 
+cDNA_data_Seurat <- subset(x = cDNA_data_Seurat, subset = nCount_RNA <= 2500) 
+
+nCells<- length(colnames(cDNA_data_Seurat))
+
+perc_correct <- nCells/nCells_wo_sbc
+
+
+
+```
+
+
+
+
+
+
+## 9/18: Addressing reviewer 1 question about "gene expression correlation between cells"
+
+
+#Set directories
+```{r}
+
+data_dir <- "/Users/dominik.lindenhofer/Documents/Data_Local/202208_POP/POP_plots/POP_Seurat_max_sbc_500reads_tot_cut.rds"
+parse_dir <- "/Users/dominik.lindenhofer/Documents/Data_Local/202208_POP/Other_data/03_Parse_iPSC"
+powell_data_dir <- "/Users/dominik.lindenhofer/Documents/Data_Local/202208_POP/Other_data/04_E-MTAB-6687/Powell_processed.csv"
+
+
+cDNA_data_Seurat <- readRDS(data_dir)
+
+
+#Apply same cutoffs as above but without the cDNA_ratio_cut
+cDNA_data_Seurat <- subset(x = cDNA_data_Seurat, subset = cDNA_ratio_sbc >= 0.9)
+cDNA_data_Seurat <- subset(x = cDNA_data_Seurat, subset = nFeature_RNA >= 12)
+cDNA_data_Seurat <- subset(x = cDNA_data_Seurat, subset = nFeature_gDNA >= 20)
+cDNA_data_Seurat <- subset(x = cDNA_data_Seurat, subset = nReads_gDNA >= 100)
+cDNA_data_Seurat <- subset(x = cDNA_data_Seurat, subset = nReads_RNA >= 500)
+cDNA_data_Seurat <- subset(x = cDNA_data_Seurat, subset = nCount_RNA >= 100) 
+cDNA_data_Seurat <- subset(x = cDNA_data_Seurat, subset = nCount_RNA <= 2500) 
+
+#normalize counts
+cDNA_data_Seurat <- NormalizeData(cDNA_data_Seurat, normalization.method = "LogNormalize", scale.factor = 10000)
+
+```
+
+
+
+
+
+
+
+
+```{r}
+library(Matrix)
+
+#Read in Parse iPSC dataset
+
+expression_matrix <- readMM(file.path(parse_dir,"DGE.mtx"))
+expression_matrix <- t(expression_matrix)
+cell_metadata <- read.csv(file.path(parse_dir,"cell_metadata.csv"), row.names = 1)
+gene_metadata <- read.csv(file.path(parse_dir,"all_genes.csv"), row.names = 1)
+colnames(expression_matrix) <- rownames(cell_metadata)
+rownames(expression_matrix) <- rownames(gene_metadata)
+
+total_counts_per_cell <- colSums(expression_matrix)
+cells_to_keep <- names(total_counts_per_cell[total_counts_per_cell >= 4500]) #based off of Parse's threshold for their retained cells for this dataset
+
+#changing ensembl gene names to standard
+ensembl_dict <- data.frame(ensembl_id = rownames(gene_metadata), gene_name = gene_metadata['gene_name'])
+ensembl_to_gene_map <- setNames(ensembl_dict$gene_name, ensembl_dict$ensembl_id)
+
+#filter to only genes of interest
+genes_to_keep <- rownames(cDNA_data_Seurat@assays$RNA$counts)
+ensembl_ids_to_keep <- ensembl_dict$ensembl_id[ensembl_dict$gene_name %in% genes_to_keep]
+common_genes <- intersect(rownames(expression_matrix), ensembl_ids_to_keep)
+expression_matrix <- expression_matrix[rownames(expression_matrix) %in% common_genes, ]
+new_gene_names <- lapply(common_genes, function(x) ensembl_to_gene_map[[x]])
+rownames(expression_matrix) <- new_gene_names
+
+
+ipsc_cells <- cell_metadata[cell_metadata$sample %in% c("AICS52A", "AICS52B"), ]
+filtered_expression_matrix <- expression_matrix[, colnames(expression_matrix) %in% rownames(ipsc_cells)]
+seurat_object <- CreateSeuratObject(counts = filtered_expression_matrix, meta.data = ipsc_cells)
+
+#filter out low read count cells
+Parse_expr_data <- subset(seurat_object, cells = cells_to_keep) #323 cells total
+
+length(colnames(Parse_expr_data))
+
+#normalize counts
+Parse_expr_data <- NormalizeData(Parse_expr_data, normalization.method = "LogNormalize", scale.factor = 10000)
+
+
+```
+
+
+
+```{r}
+
+#filter POP to only glyoxal cells
+cDNA_data_Seurat_gly <- subset(cDNA_data_Seurat, subset = Type == "Glyoxal")
+expression_data <- as.matrix(GetAssayData(cDNA_data_Seurat_gly@assays$RNA))
+set.seed(123)
+sampled_columns <- sample(ncol(expression_data), 323) #downsample cells to match Parse data
+expression_data <- expression_data[, sampled_columns]
+gene_variance <- apply(expression_data, 1, var)
+average_expression <- rowMeans(expression_data)
+
+#filter POP to only glyoxal cells
+cDNA_data_Seurat_pfa <- subset(cDNA_data_Seurat, subset = Type == "PFA")
+expression_data_pfa <- as.matrix(GetAssayData(cDNA_data_Seurat_pfa@assays$RNA))
+set.seed(123)
+sampled_columns <- sample(ncol(expression_data_pfa), 323) #downsample cells to match Parse data
+expression_data_pfa <- expression_data_pfa[, sampled_columns]
+gene_variance_pfa <- apply(expression_data_pfa, 1, var)
+average_expression_pfa <- rowMeans(expression_data_pfa)
+
+
+
+
+
+
+#Read in 10x data for comparison
+powell_data <- read.csv(powell_data_dir , header=TRUE)
+powell_data <- powell_data[-c(7), ] #remove a row of all NAs, where a gene name didn't match
+rownames(powell_data) <- powell_data[, 1]
+powell_data <- powell_data[ ,-c(1)]
+expr_data <- as.matrix(sapply(powell_data,as.numeric))
+sampled_columns <- sample(ncol(expr_data), 323) #downsample cells to match Parse data
+expr_data <- expr_data[, sampled_columns]
+rownames(expr_data) <- rownames(powell_data)  # Reassign rownames
+total_counts_per_cell <- colSums(expr_data) #need to normalize data in the same way as SDR data first
+normalized_counts <- sweep(expr_data, 2, total_counts_per_cell, FUN = "/") * 10000
+log_normalized_counts <- log1p(normalized_counts)
+
+avg_expr <- rowMeans(log_normalized_counts)
+gene_var <- apply(log_normalized_counts, 1, var)
+
+
+
+
+
+#Add in Parse data
+Parse_expr_mat <- as.matrix(GetAssayData(Parse_expr_data@assays$RNA)) #using normalized data
+Parse_var <- apply(Parse_expr_mat, 1, var)
+Parse_avg_expression <- rowMeans(Parse_expr_mat)
+
+
+powell_plot_data <- data.frame(
+  gene = rownames(powell_data),
+  average_expression = avg_expr,
+  gene_variance = gene_var,
+  dataset = "10x"
+)
+  
+sdr_plot_data <- data.frame(
+  gene = rownames(expression_data),
+  average_expression = average_expression,
+  gene_variance = gene_variance,
+  dataset = "SDR_gly"
+)
+
+sdr_plot_data_pfa <- data.frame(
+  gene = rownames(expression_data_pfa),
+  average_expression = average_expression_pfa,
+  gene_variance = gene_variance_pfa,
+  dataset = "SDR_pfa"
+)
+
+parse_plot_data <- data.frame(
+  gene = rownames(Parse_expr_mat),
+  average_expression= Parse_avg_expression,
+  gene_variance = Parse_var,
+  dataset="Parse"
+)
+
+#Check for missing data
+
+missing <- setdiff(sdr_plot_data$gene, powell_plot_data$gene)
+
+to_add_powell <- data.frame(gene = missing, 
+                            average_expression = 0,
+                            gene_variance = 0,
+                            dataset = "10x")
+
+powell_plot_data <- rbind(powell_plot_data, to_add_powell)
+
+
+combined_plot_data <- rbind(powell_plot_data, sdr_plot_data, sdr_plot_data_pfa, parse_plot_data)
+
+
+group_colors_comp <- c("SDR_pfa" = "#003f5c", "SDR_gly" = "#ffa600", "10x" = "#1A1A19",  Parse = "#B03052")
+
+
+
+title = "Expression_v_variance_SDR-10x-Parse.pdf"
+p <- combined_plot_data %>%
+ggplot(aes(x = average_expression, y = gene_variance, color = dataset)) +
+  geom_point(size = 5) +
+  labs(x = "Average Expression (log1p)", y = "Variance", 
+       title = "Variance vs Average Expression") +
+  	theme_classic() +
+  scale_color_manual(values = group_colors_comp)
+
+p
+ggsave(filename = title, path = plot_save_dir, plot = p, device = "pdf", scale = 1, 
+       width = 15, height = 15, units = "cm", dpi = 300)
+
+
+
+title = "Expression_v_variance_SDR-10x-Parse_wo_legend.pdf"
+p <- combined_plot_data %>%
+ggplot(aes(x = average_expression, y = gene_variance, color = dataset)) +
+  geom_point(size = 5) +
+  labs(x = "Average Expression (log1p)", y = "Variance", 
+       title = "Variance vs Average Expression") +
+  	theme_classic() +
+  guides(color = "none")+
+  scale_color_manual(values = group_colors_comp)
+
+p
+ggsave(filename = title, path = plot_save_dir, plot = p, device = "pdf", scale = 1, 
+       width = 15, height = 15, units = "cm", dpi = 300)
+
+
+
+to_file <- combined_plot_data %>% dplyr::select(Gene = gene, Variance = gene_variance, norm_avg_nUMIs_log1p = average_expression, dataset )
+file_name = "Fig1_M_o_Expression_v_variance_SDR-10x-Parse.csv"
+write.csv(to_file, paste0(file_save_dir, "/", file_name), row.names = FALSE) 
+
+
+
+```
+
+
+## 20250130: Addressing reviewer 1 question about "gene expression correlation between cells" - now do the correlation between cells directly 
+
+
+
+#Set directories
+```{r}
+
+data_dir <- "/Users/dominik.lindenhofer/Documents/Data_Local/202208_POP/POP_plots/POP_Seurat_max_sbc_500reads_tot_cut.rds"
+parse_dir <- "/Users/dominik.lindenhofer/Documents/Data_Local/202208_POP/Other_data/03_Parse_iPSC"
+powell_data_dir <- "/Users/dominik.lindenhofer/Documents/Data_Local/202208_POP/Other_data/04_E-MTAB-6687/Powell_processed.csv"
+
+
+cDNA_data_Seurat <- readRDS(data_dir)
+
+
+#Apply same cutoffs as above but without the cDNA_ratio_cut
+cDNA_data_Seurat <- subset(x = cDNA_data_Seurat, subset = cDNA_ratio_sbc >= 0.9)
+cDNA_data_Seurat <- subset(x = cDNA_data_Seurat, subset = nFeature_RNA >= 12)
+cDNA_data_Seurat <- subset(x = cDNA_data_Seurat, subset = nFeature_gDNA >= 20)
+cDNA_data_Seurat <- subset(x = cDNA_data_Seurat, subset = nReads_gDNA >= 100)
+cDNA_data_Seurat <- subset(x = cDNA_data_Seurat, subset = nReads_RNA >= 500)
+cDNA_data_Seurat <- subset(x = cDNA_data_Seurat, subset = nCount_RNA >= 100) 
+cDNA_data_Seurat <- subset(x = cDNA_data_Seurat, subset = nCount_RNA <= 2500) 
+
+#normalize counts
+cDNA_data_Seurat <- NormalizeData(cDNA_data_Seurat, normalization.method = "LogNormalize", scale.factor = 10000)
+
+
+
+
+#For glyoxal
+cDNA_data_Seurat_gly <- subset(cDNA_data_Seurat, subset = Type == "Glyoxal")
+
+#Subsample 100 cells
+
+# Randomly sample 100 cell names
+set.seed(123)  # Set seed for reproducibility
+selected_cells <- sample(Cells(cDNA_data_Seurat_gly), 100)
+
+# Subset the Seurat object
+cDNA_data_Seurat_gly  <- subset(cDNA_data_Seurat_gly, cells = selected_cells)
+
+# Extract normalized expression matrix
+expr_matrix <- GetAssayData(cDNA_data_Seurat_gly, slot = "data")  # "data" slot contains log-normalized values
+cell_names <- colnames(expr_matrix)  # Get cell names
+
+
+# Create an empty matrix to store results
+results_gly <- data.frame(Cell1 = character(), Cell2 = character(), Correlation = numeric())
+
+# Loop through all unique cell pairs
+for (i in 1:(length(cell_names) - 1)) {
+  for (j in (i + 1):length(cell_names)) {
+    # Get cell names
+    cell1 <- cell_names[i]
+    cell2 <- cell_names[j]
+    
+    # Compute Pearson correlation
+    corr_value <- cor(expr_matrix[, cell1], expr_matrix[, cell2], method = "pearson")
+    
+    # Store result
+    results_gly <- rbind(results_gly, data.frame(Cell1 = cell1, Cell2 = cell2, Correlation = corr_value))
+  }
+}
+
+
+
+#For pfa
+cDNA_data_Seurat_pfa <- subset(cDNA_data_Seurat, subset = Type == "PFA")
+
+#Subsample 100 cells
+
+# Randomly sample 100 cell names
+set.seed(123)  # Set seed for reproducibility
+selected_cells <- sample(Cells(cDNA_data_Seurat_pfa), 100)
+
+# Subset the Seurat object
+cDNA_data_Seurat_pfa  <- subset(cDNA_data_Seurat_pfa, cells = selected_cells)
+
+
+
+# Extract normalized expression matrix
+expr_matrix <- GetAssayData(cDNA_data_Seurat_pfa, slot = "data")  # "data" slot contains log-normalized values
+cell_names <- colnames(expr_matrix)  # Get cell names
+
+
+# Create an empty matrix to store results
+results_pfa <- data.frame(Cell1 = character(), Cell2 = character(), Correlation = numeric())
+
+# Loop through all unique cell pairs
+for (i in 1:(length(cell_names) - 1)) {
+  for (j in (i + 1):length(cell_names)) {
+    # Get cell names
+    cell1 <- cell_names[i]
+    cell2 <- cell_names[j]
+    
+    # Compute Pearson correlation
+    corr_value <- cor(expr_matrix[, cell1], expr_matrix[, cell2], method = "pearson")
+    
+    # Store result
+    results_pfa <- rbind(results_pfa, data.frame(Cell1 = cell1, Cell2 = cell2, Correlation = corr_value))
+  }
+}
+
+
+
+
+
+
+```
+
+
+
+
+
+
+#Do for 10x Genomics
+
+```{r}
+
+powell_data <- read.delim("/Users/dominik.lindenhofer/Documents/Data_Local/202208_POP/Other_data/04_E-MTAB-6687/WTC11_scRNA_Sample1.tsv") 
+
+gene_names <- sapply(str_split(powell_data$X, "_"), `[`, 1) %>% as.data.frame()
+
+colnames(gene_names) <- c("Gene")
+
+powell_data <- cbind(gene_names, powell_data)
+
+to_filter <- rownames(cDNA_data_Seurat)
+
+powell_data <- powell_data %>% filter(Gene %in% to_filter)
+
+#missing <- setdiff(to_filter, powell_data$Gene ) 
+
+
+#rownames(powell_data) <- gene_names
+rownames(powell_data) <- powell_data$Gene
+
+powell_data <- powell_data %>% dplyr::select(-X, -Gene)
+
+powell_data_mat <- as.matrix(powell_data)
+
+powell_data_seurat <- CreateSeuratObject(counts = powell_data_mat, project = "powell_data")
+
+
+#normalize counts
+powell_data_seurat <- NormalizeData(powell_data_seurat, normalization.method = "LogNormalize", scale.factor = 10000)
+
+
+# Randomly sample 100 cell names
+set.seed(123)  # Set seed for reproducibility
+selected_cells <- sample(Cells(powell_data_seurat), 100)
+
+# Subset the Seurat object
+powell_data_seurat  <- subset(powell_data_seurat, cells = selected_cells)
+
+
+
+# Extract normalized expression matrix
+expr_matrix <- GetAssayData(powell_data_seurat, slot = "data")  # "data" slot contains log-normalized values
+cell_names <- colnames(expr_matrix)  # Get cell names
+
+
+# Create an empty matrix to store results
+results_powell <- data.frame(Cell1 = character(), Cell2 = character(), Correlation = numeric())
+
+# Loop through all unique cell pairs
+for (i in 1:(length(cell_names) - 1)) {
+  for (j in (i + 1):length(cell_names)) {
+    # Get cell names
+    cell1 <- cell_names[i]
+    cell2 <- cell_names[j]
+    
+    # Compute Pearson correlation
+    corr_value <- cor(expr_matrix[, cell1], expr_matrix[, cell2], method = "pearson")
+    
+    # Store result
+    results_powell <- rbind(results_powell, data.frame(Cell1 = cell1, Cell2 = cell2, Correlation = corr_value))
+  }
+}
+
+
+```
+
+
+#Do for ParseBio
+
+```{r}
+
+#Read in Parse iPSC dataset
+
+expression_matrix <- readMM(file.path(parse_dir,"DGE.mtx"))
+expression_matrix <- t(expression_matrix)
+cell_metadata <- read.csv(file.path(parse_dir,"cell_metadata.csv"), row.names = 1)
+gene_metadata <- read.csv(file.path(parse_dir,"all_genes.csv"), row.names = 1)
+colnames(expression_matrix) <- rownames(cell_metadata)
+rownames(expression_matrix) <- rownames(gene_metadata)
+
+total_counts_per_cell <- colSums(expression_matrix)
+cells_to_keep <- names(total_counts_per_cell[total_counts_per_cell >= 4500]) #based off of Parse's threshold for their retained cells for this dataset
+
+#changing ensembl gene names to standard
+ensembl_dict <- data.frame(ensembl_id = rownames(gene_metadata), gene_name = gene_metadata['gene_name'])
+ensembl_to_gene_map <- setNames(ensembl_dict$gene_name, ensembl_dict$ensembl_id)
+
+#filter to only genes of interest
+genes_to_keep <- rownames(cDNA_data_Seurat@assays$RNA$counts)
+ensembl_ids_to_keep <- ensembl_dict$ensembl_id[ensembl_dict$gene_name %in% genes_to_keep]
+common_genes <- intersect(rownames(expression_matrix), ensembl_ids_to_keep)
+expression_matrix <- expression_matrix[rownames(expression_matrix) %in% common_genes, ]
+new_gene_names <- lapply(common_genes, function(x) ensembl_to_gene_map[[x]])
+rownames(expression_matrix) <- new_gene_names
+
+
+ipsc_cells <- cell_metadata[cell_metadata$sample %in% c("AICS52A", "AICS52B"), ]
+filtered_expression_matrix <- expression_matrix[, colnames(expression_matrix) %in% rownames(ipsc_cells)]
+seurat_object <- CreateSeuratObject(counts = filtered_expression_matrix, meta.data = ipsc_cells)
+
+#filter out low read count cells
+Parse_expr_data <- subset(seurat_object, cells = cells_to_keep) #323 cells total
+
+length(colnames(Parse_expr_data))
+
+#normalize counts
+Parse_expr_data <- NormalizeData(Parse_expr_data, normalization.method = "LogNormalize", scale.factor = 10000)
+
+
+
+# Randomly sample 100 cell names
+set.seed(123)  # Set seed for reproducibility
+selected_cells <- sample(Cells(Parse_expr_data), 100)
+
+# Subset the Seurat object
+Parse_expr_data  <- subset(Parse_expr_data, cells = selected_cells)
+
+
+
+# Extract normalized expression matrix
+expr_matrix <- GetAssayData(Parse_expr_data, slot = "data")  # "data" slot contains log-normalized values
+cell_names <- colnames(expr_matrix)  # Get cell names
+
+
+# Create an empty matrix to store results
+results_parse <- data.frame(Cell1 = character(), Cell2 = character(), Correlation = numeric())
+
+# Loop through all unique cell pairs
+for (i in 1:(length(cell_names) - 1)) {
+  for (j in (i + 1):length(cell_names)) {
+    # Get cell names
+    cell1 <- cell_names[i]
+    cell2 <- cell_names[j]
+    
+    # Compute Pearson correlation
+    corr_value <- cor(expr_matrix[, cell1], expr_matrix[, cell2], method = "pearson")
+    
+    # Store result
+    results_parse <- rbind(results_parse, data.frame(Cell1 = cell1, Cell2 = cell2, Correlation = corr_value))
+  }
+}
+
+
+#Merge
+
+results_gly <- results_gly %>% mutate(Type = "Glyoxal")
+results_pfa <- results_pfa %>% mutate(Type = "PFA")
+results_powell <- results_powell %>% mutate(Type = "10x")
+results_parse <- results_parse %>% mutate(Type = "ParseBio")
+
+
+results <- rbind(results_gly, results_pfa, results_powell, results_parse)
+
+
+
+
+```
+
+
+
+#Plot correlation 
+
+```{r}
+
+group_colors_comp <- c("PFA" = "#003f5c", "Glyoxal" = "#ffa600", "10x" = "#1A1A19",  "ParseBio" = "#B03052")
+
+results$Type <- factor(results$Type, levels = c("PFA", "Glyoxal", "10x", "ParseBio"))
+
+
+title = "Correlation_gene_expression_100_cells.pdf"
+
+#Plot sample barcode ratio
+p <- results %>%
+ ggplot(aes(x=Type, y=Correlation, fill = Type))+
+  geom_violin(alpha = 0.2)+
+  geom_boxplot(width = 0.25)+
+  	theme_classic() +
+  	theme(axis.text.x = element_text(angle = 45, vjust = 1, hjust=1)) +
+  	theme(plot.title = element_text(hjust=0.5, face="bold")) +
+    scale_y_continuous(limits = c(0,1))+
+  	ggtitle(title)+
+      labs(x = "Type", y = "% Gene expression correlation")+
+    scale_fill_manual(values = group_colors_comp)+
+    guides(fill = "none")
+
+p 
+
+ggsave(filename = title, path = plot_save_dir, plot = p, device = "pdf", scale = 1,
+       width = 15, height = 15, units = "cm", dpi = 300)
+
+
+to_file <- results 
+file_name = "Fig1_S2_e_Correlation-100-cells.csv"
+write.csv(to_file, paste0(file_save_dir, "/", file_name), row.names = FALSE) 
+
+
+
+
+```

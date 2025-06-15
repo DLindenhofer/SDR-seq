@@ -1,0 +1,570 @@
+---
+title: "20240422_SDR002_Comb_REF_spec_testing"
+author: "Dominik Lindenhofer"
+date: "2024-04-22"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+## Load packages
+
+
+```{r}
+
+library(Seurat)
+library(dplyr)
+library(ggplot2)
+library(Matrix)
+library(reshape2)
+library(data.table)
+library(stringr)
+library(tidyr)
+library(scales)
+library(rtracklayer)
+library(here)
+
+
+plot_save_dir <- here("Plots")
+
+file_save_dir <- "/Users/dominik.lindenhofer/ownCloud/Shared_project_folder/Paper_drafts/2022_SDR_Paper/Source_data/Individual_files_all"
+
+
+```
+
+# Use non filtered data as input
+
+
+#RNA data 
+
+#60 and 60 fail 
+
+
+```{r}
+
+panel = 60 
+
+#load read data sets 
+
+gDNA_data_features_reads <- read.delim(paste0("gDNA_count_DATA-cDNA/", panel, "/raw_reads_bc_matrix/features.tsv.gz"), header = FALSE) %>% dplyr::pull(1)
+gDNA_data_features_reads <- sub("_chrom", "\\1", gDNA_data_features_reads)
+gDNA_data_barcodes_reads <- read.delim(paste0("gDNA_count_DATA-cDNA/", panel, "/raw_reads_bc_matrix/barcodes.tsv.gz"), header = FALSE) %>% dplyr::pull(1)
+gDNA_mat_reads <- readMM(paste0("gDNA_count_DATA-cDNA/", panel, "/raw_reads_bc_matrix/matrix.mtx.gz"))
+
+dimnames(gDNA_mat_reads) <- list(gDNA_data_features_reads, gDNA_data_barcodes_reads)
+
+sum_tot_60 <- sum(gDNA_mat_reads)
+
+#Split in gDNA and RNA
+
+#gDNA
+index <- grepl("^NOEG|^OEG", rownames(gDNA_mat_reads))
+
+gDNA <- gDNA_mat_reads[index,]
+sum_gDNA_60 <- sum(gDNA)
+
+
+
+
+#RNA
+index <- !grepl("^NOEG|^OEG", rownames(gDNA_mat_reads))
+
+RNA <- gDNA_mat_reads[index,]
+sum_RNA_60 <- sum(RNA)
+
+
+
+
+panel = "60fail"
+
+
+#load read data sets 
+
+gDNA_data_features_reads <- read.delim(paste0("gDNA_count_DATA-cDNA/", panel, "/raw_reads_bc_matrix/features.tsv.gz"), header = FALSE) %>% dplyr::pull(1)
+gDNA_data_features_reads <- sub("_chrom", "\\1", gDNA_data_features_reads)
+gDNA_data_barcodes_reads <- read.delim(paste0("gDNA_count_DATA-cDNA/", panel, "/raw_reads_bc_matrix/barcodes.tsv.gz"), header = FALSE) %>% dplyr::pull(1)
+gDNA_mat_reads <- readMM(paste0("gDNA_count_DATA-cDNA/", panel, "/raw_reads_bc_matrix/matrix.mtx.gz"))
+
+dimnames(gDNA_mat_reads) <- list(gDNA_data_features_reads, gDNA_data_barcodes_reads)
+
+sum_tot_60fail <- sum(gDNA_mat_reads)
+
+#Split in gDNA and RNA
+
+#gDNA
+index <- grepl("^NOEG|^OEG", rownames(gDNA_mat_reads))
+
+gDNA <- gDNA_mat_reads[index,]
+sum_gDNA_60fail <- sum(gDNA)
+
+
+
+
+#RNA
+index <- !grepl("^NOEG|^OEG", rownames(gDNA_mat_reads))
+
+RNA <- gDNA_mat_reads[index,]
+sum_RNA_60fail <- sum(RNA)
+
+
+
+#Calculate combined for panel 60
+
+
+sum_tot_60 <- sum_tot_60 + sum_tot_60fail
+sum_gDNA_60 <- sum_gDNA_60 + sum_gDNA_60fail
+sum_RNA_60 <- sum_RNA_60 + sum_RNA_60fail
+
+
+to_plot <- data.frame(Panel = "60", DATA = "RNA") %>% mutate(Perc_gDNA = sum_gDNA_60/sum_tot_60, 
+                                               Perc_RNA = sum_RNA_60/sum_tot_60)
+
+
+
+```
+
+
+
+
+#120
+
+
+```{r}
+
+panel = 120 
+
+#load read data sets 
+
+gDNA_data_features_reads <- read.delim(paste0("gDNA_count_DATA-cDNA/", panel, "/raw_reads_bc_matrix/features.tsv.gz"), header = FALSE) %>% dplyr::pull(1)
+gDNA_data_features_reads <- sub("_chrom", "\\1", gDNA_data_features_reads)
+gDNA_data_barcodes_reads <- read.delim(paste0("gDNA_count_DATA-cDNA/", panel, "/raw_reads_bc_matrix/barcodes.tsv.gz"), header = FALSE) %>% dplyr::pull(1)
+gDNA_mat_reads <- readMM(paste0("gDNA_count_DATA-cDNA/", panel, "/raw_reads_bc_matrix/matrix.mtx.gz"))
+
+dimnames(gDNA_mat_reads) <- list(gDNA_data_features_reads, gDNA_data_barcodes_reads)
+
+sum_tot <- sum(gDNA_mat_reads)
+
+#Split in gDNA and RNA
+
+#gDNA
+index <- grepl("^NOEG|^OEG", rownames(gDNA_mat_reads))
+
+gDNA <- gDNA_mat_reads[index,]
+sum_gDNA <- sum(gDNA)
+
+
+
+
+#RNA
+index <- !grepl("^NOEG|^OEG", rownames(gDNA_mat_reads))
+
+RNA <- gDNA_mat_reads[index,]
+sum_RNA <- sum(RNA)
+
+
+#Add information to file
+
+to_add <- data.frame(Panel = panel, DATA = "RNA") %>% mutate(Perc_gDNA = sum_gDNA/sum_tot, 
+                                               Perc_RNA = sum_RNA/sum_tot)
+
+
+to_plot <- rbind(to_plot, to_add)
+
+
+
+```
+
+
+
+#240
+
+```{r}
+
+panel = 240
+
+#load read data sets 
+
+gDNA_data_features_reads <- read.delim(paste0("gDNA_count_DATA-cDNA/", panel, "/raw_reads_bc_matrix/features.tsv.gz"), header = FALSE) %>% dplyr::pull(1)
+gDNA_data_features_reads <- sub("_chrom", "\\1", gDNA_data_features_reads)
+gDNA_data_barcodes_reads <- read.delim(paste0("gDNA_count_DATA-cDNA/", panel, "/raw_reads_bc_matrix/barcodes.tsv.gz"), header = FALSE) %>% dplyr::pull(1)
+gDNA_mat_reads <- readMM(paste0("gDNA_count_DATA-cDNA/", panel, "/raw_reads_bc_matrix/matrix.mtx.gz"))
+
+dimnames(gDNA_mat_reads) <- list(gDNA_data_features_reads, gDNA_data_barcodes_reads)
+
+sum_tot <- sum(gDNA_mat_reads)
+
+#Split in gDNA and RNA
+
+#gDNA
+index <- grepl("^NOEG|^OEG", rownames(gDNA_mat_reads))
+
+gDNA <- gDNA_mat_reads[index,]
+sum_gDNA <- sum(gDNA)
+
+
+
+
+#RNA
+index <- !grepl("^NOEG|^OEG", rownames(gDNA_mat_reads))
+
+RNA <- gDNA_mat_reads[index,]
+sum_RNA <- sum(RNA)
+
+
+#Add information to file
+
+to_add <- data.frame(Panel = panel, DATA = "RNA") %>% mutate(Perc_gDNA = sum_gDNA/sum_tot, 
+                                               Perc_RNA = sum_RNA/sum_tot)
+
+
+to_plot <- rbind(to_plot, to_add)
+
+
+
+
+
+
+```
+
+
+#Make bargraph 
+
+
+
+
+```{r}
+
+
+
+to_plot_res <- to_plot %>% reshape2::melt(id.vars = c("Panel", "DATA"),
+                                        variable.name = "ID", 
+                                        value.name = "Percentage")
+
+
+
+
+#Set order and colors
+to_plot_res$Panel <- factor(to_plot_res$Panel, levels = c("60", "120", "240"))
+
+#group_colors <- c("dCas9" = "#0C2D57", "PEmax" = "#FC6736", "PEmax-MLH1dn" = "#FFB0B0" )
+group_colors_panel <- c("60" = "#003f5c", "120" = "#bc5090", "240" = "#ffa600" )
+group_colors_id <- c(Perc_gDNA = "#5BBCFF", Perc_RNA = "#41B06E" )
+
+
+#Arrange according to editing efficiency 
+
+
+
+title = "DATA_cDNA_REF_combined_spec_testing.pdf"
+p <- to_plot_res %>%
+   ggplot(aes(x= ID, y = Percentage))+ 
+    stat_summary(aes(fill = ID), fun.y = mean, geom = "bar", alpha = 0.8, show.legend = FALSE) +
+      #geom_jitter(aes(color = Panel),width = 0.25, size = 7, show.legend = FALSE)+
+  geom_jitter(color = "grey",width = 0.15, size = 7, show.legend = FALSE)+
+    stat_summary(fun.data = mean_se,geom = "errorbar", width = 0.25, size = 1)+
+ # scale_color_manual(values = group_colors_panel)+
+   scale_fill_manual(values = group_colors_id)+
+      #coord_trans(y = "log10", limy = c(0,6000))+ 
+      #scale_y_continuous(breaks = 10^(0:4)) +
+  	theme_classic() +
+  labs(y = "% of summed edits (HET and ALT)")+
+  #scale_y_continuous(limits = c(0,5))+
+  	theme(axis.text.x = element_text(angle = 45, vjust = 1, hjust=1)) +
+  	theme(plot.title = element_text(hjust=0.5, face="bold")) +
+  	ggtitle(title)
+
+p
+
+ggsave(filename = title, path = "Plots", plot = p, device = "pdf", scale = 1,
+       width = 10, height = 15, units = "cm", dpi = 300)
+
+
+
+to_file_add <-  to_plot_res %>% dplyr::rename(Sample = Panel)
+
+
+```
+
+
+
+
+
+
+
+
+
+
+
+
+
+#gDNA data 
+
+#60 and 60 fail 
+
+
+```{r}
+
+panel = 60 
+
+#load read data sets 
+
+gDNA_data_features_reads <- read.delim(paste0("gDNA_count_DATA-gDNA/", panel, "/raw_reads_bc_matrix/features.tsv.gz"), header = FALSE) %>% dplyr::pull(1)
+gDNA_data_features_reads <- sub("_chrom", "\\1", gDNA_data_features_reads)
+gDNA_data_barcodes_reads <- read.delim(paste0("gDNA_count_DATA-gDNA/", panel, "/raw_reads_bc_matrix/barcodes.tsv.gz"), header = FALSE) %>% dplyr::pull(1)
+gDNA_mat_reads <- readMM(paste0("gDNA_count_DATA-gDNA/", panel, "/raw_reads_bc_matrix/matrix.mtx.gz"))
+
+dimnames(gDNA_mat_reads) <- list(gDNA_data_features_reads, gDNA_data_barcodes_reads)
+
+sum_tot_60 <- sum(gDNA_mat_reads)
+
+#Split in gDNA and RNA
+
+#gDNA
+index <- grepl("^NOEG|^OEG", rownames(gDNA_mat_reads))
+
+gDNA <- gDNA_mat_reads[index,]
+sum_gDNA_60 <- sum(gDNA)
+
+
+
+
+#RNA
+index <- !grepl("^NOEG|^OEG", rownames(gDNA_mat_reads))
+
+RNA <- gDNA_mat_reads[index,]
+sum_RNA_60 <- sum(RNA)
+
+
+
+
+panel = "60fail"
+
+
+#load read data sets 
+
+gDNA_data_features_reads <- read.delim(paste0("gDNA_count_DATA-gDNA/", panel, "/raw_reads_bc_matrix/features.tsv.gz"), header = FALSE) %>% dplyr::pull(1)
+gDNA_data_features_reads <- sub("_chrom", "\\1", gDNA_data_features_reads)
+gDNA_data_barcodes_reads <- read.delim(paste0("gDNA_count_DATA-gDNA/", panel, "/raw_reads_bc_matrix/barcodes.tsv.gz"), header = FALSE) %>% dplyr::pull(1)
+gDNA_mat_reads <- readMM(paste0("gDNA_count_DATA-gDNA/", panel, "/raw_reads_bc_matrix/matrix.mtx.gz"))
+
+dimnames(gDNA_mat_reads) <- list(gDNA_data_features_reads, gDNA_data_barcodes_reads)
+
+sum_tot_60fail <- sum(gDNA_mat_reads)
+
+#Split in gDNA and RNA
+
+#gDNA
+index <- grepl("^NOEG|^OEG", rownames(gDNA_mat_reads))
+
+gDNA <- gDNA_mat_reads[index,]
+sum_gDNA_60fail <- sum(gDNA)
+
+
+
+
+#RNA
+index <- !grepl("^NOEG|^OEG", rownames(gDNA_mat_reads))
+
+RNA <- gDNA_mat_reads[index,]
+sum_RNA_60fail <- sum(RNA)
+
+
+
+#Calculate combined for panel 60
+
+
+sum_tot_60 <- sum_tot_60 + sum_tot_60fail
+sum_gDNA_60 <- sum_gDNA_60 + sum_gDNA_60fail
+sum_RNA_60 <- sum_RNA_60 + sum_RNA_60fail
+
+
+to_plot <- data.frame(Panel = "60", DATA = "gDNA") %>% mutate(Perc_gDNA = sum_gDNA_60/sum_tot_60, 
+                                               Perc_RNA = sum_RNA_60/sum_tot_60)
+
+
+
+```
+
+
+
+
+#120
+
+
+```{r}
+
+panel = 120 
+
+#load read data sets 
+
+gDNA_data_features_reads <- read.delim(paste0("gDNA_count_DATA-gDNA/", panel, "/raw_reads_bc_matrix/features.tsv.gz"), header = FALSE) %>% dplyr::pull(1)
+gDNA_data_features_reads <- sub("_chrom", "\\1", gDNA_data_features_reads)
+gDNA_data_barcodes_reads <- read.delim(paste0("gDNA_count_DATA-gDNA/", panel, "/raw_reads_bc_matrix/barcodes.tsv.gz"), header = FALSE) %>% dplyr::pull(1)
+gDNA_mat_reads <- readMM(paste0("gDNA_count_DATA-gDNA/", panel, "/raw_reads_bc_matrix/matrix.mtx.gz"))
+
+dimnames(gDNA_mat_reads) <- list(gDNA_data_features_reads, gDNA_data_barcodes_reads)
+
+sum_tot <- sum(gDNA_mat_reads)
+
+#Split in gDNA and RNA
+
+#gDNA
+index <- grepl("^NOEG|^OEG", rownames(gDNA_mat_reads))
+
+gDNA <- gDNA_mat_reads[index,]
+sum_gDNA <- sum(gDNA)
+
+
+
+
+#RNA
+index <- !grepl("^NOEG|^OEG", rownames(gDNA_mat_reads))
+
+RNA <- gDNA_mat_reads[index,]
+sum_RNA <- sum(RNA)
+
+
+#Add information to file
+
+to_add <- data.frame(Panel = panel, DATA = "gDNA") %>% mutate(Perc_gDNA = sum_gDNA/sum_tot, 
+                                               Perc_RNA = sum_RNA/sum_tot)
+
+
+to_plot <- rbind(to_plot, to_add)
+
+
+
+```
+
+
+
+#240
+
+```{r}
+
+panel = 240
+
+#load read data sets 
+
+gDNA_data_features_reads <- read.delim(paste0("gDNA_count_DATA-gDNA/", panel, "/raw_reads_bc_matrix/features.tsv.gz"), header = FALSE) %>% dplyr::pull(1)
+gDNA_data_features_reads <- sub("_chrom", "\\1", gDNA_data_features_reads)
+gDNA_data_barcodes_reads <- read.delim(paste0("gDNA_count_DATA-gDNA/", panel, "/raw_reads_bc_matrix/barcodes.tsv.gz"), header = FALSE) %>% dplyr::pull(1)
+gDNA_mat_reads <- readMM(paste0("gDNA_count_DATA-gDNA/", panel, "/raw_reads_bc_matrix/matrix.mtx.gz"))
+
+dimnames(gDNA_mat_reads) <- list(gDNA_data_features_reads, gDNA_data_barcodes_reads)
+
+sum_tot <- sum(gDNA_mat_reads)
+
+#Split in gDNA and RNA
+
+#gDNA
+index <- grepl("^NOEG|^OEG", rownames(gDNA_mat_reads))
+
+gDNA <- gDNA_mat_reads[index,]
+sum_gDNA <- sum(gDNA)
+
+
+
+
+#RNA
+index <- !grepl("^NOEG|^OEG", rownames(gDNA_mat_reads))
+
+RNA <- gDNA_mat_reads[index,]
+sum_RNA <- sum(RNA)
+
+
+#Add information to file
+
+to_add <- data.frame(Panel = panel, DATA = "gDNA") %>% mutate(Perc_gDNA = sum_gDNA/sum_tot, 
+                                               Perc_RNA = sum_RNA/sum_tot)
+
+
+to_plot <- rbind(to_plot, to_add)
+
+
+
+
+
+
+```
+
+
+#Make bargraph 
+
+
+
+
+```{r}
+
+
+
+to_plot_res <- to_plot %>% reshape2::melt(id.vars = c("Panel", "DATA"),
+                                        variable.name = "ID", 
+                                        value.name = "Percentage")
+
+
+
+
+#Set order and colors
+to_plot_res$Panel <- factor(to_plot_res$Panel, levels = c("60", "120", "240"))
+
+#group_colors <- c("dCas9" = "#0C2D57", "PEmax" = "#FC6736", "PEmax-MLH1dn" = "#FFB0B0" )
+group_colors_panel <- c("60" = "#003f5c", "120" = "#bc5090", "240" = "#ffa600" )
+group_colors_id <- c(Perc_gDNA = "#5BBCFF", Perc_RNA = "#41B06E" )
+
+
+#Arrange according to editing efficiency 
+
+
+
+title = "DATA_gDNA_REF_combined_spec_testing.pdf"
+p <- to_plot_res %>%
+   ggplot(aes(x= ID, y = Percentage))+ 
+    stat_summary(aes(fill = ID), fun.y = mean, geom = "bar", alpha = 0.8, show.legend = FALSE) +
+      #geom_jitter(aes(color = Panel),width = 0.25, size = 7, show.legend = FALSE)+
+  geom_jitter(color = "grey",width = 0.15, size = 7, show.legend = FALSE)+
+    stat_summary(fun.data = mean_se,geom = "errorbar", width = 0.25, size = 1)+
+ # scale_color_manual(values = group_colors_panel)+
+   scale_fill_manual(values = group_colors_id)+
+      #coord_trans(y = "log10", limy = c(0,6000))+ 
+      #scale_y_continuous(breaks = 10^(0:4)) +
+  	theme_classic() +
+  labs(y = "% of summed edits (HET and ALT)")+
+  #scale_y_continuous(limits = c(0,5))+
+  	theme(axis.text.x = element_text(angle = 45, vjust = 1, hjust=1)) +
+  	theme(plot.title = element_text(hjust=0.5, face="bold")) +
+  	ggtitle(title)
+
+p
+
+ggsave(filename = title, path = "Plots", plot = p, device = "pdf", scale = 1,
+       width = 10, height = 15, units = "cm", dpi = 300)
+
+
+
+```
+
+
+```{r}
+#Write out source data
+
+
+
+to_file <- to_plot_res %>% dplyr::rename(Sample = Panel)
+
+#Combine
+to_file <- rbind(to_file, to_file_add)
+
+to_file <- to_file %>% mutate(Sample = case_when(Sample == 60 ~ "SDR002_120",
+                                                 Sample == 120 ~ "SDR002_240",
+                                                 Sample == 240 ~ "SDR002_480"))
+
+
+file_name = "Fig2_S3_f_REF_spec.csv"
+write.csv(to_file, paste0(file_save_dir, "/", file_name), row.names = FALSE) 
+
+
+
+```

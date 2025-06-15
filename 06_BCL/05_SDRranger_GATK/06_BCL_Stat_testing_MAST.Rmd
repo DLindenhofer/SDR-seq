@@ -1,0 +1,3061 @@
+---
+title: "20240506_SDR005_Stat_testing_MAST"
+output: html_document
+date: "2024-05-06"
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+
+## R Markdown
+
+
+
+#Load libraries
+
+
+```{r}
+
+library(Seurat)
+library(dplyr)
+library(ggplot2)
+library(Matrix)
+library(reshape2)
+library(data.table)
+library(stringr)
+library(tidyr)
+library(scales)
+library(rtracklayer)
+library(data.table)
+library(readr)
+
+
+
+```
+
+#Load data
+
+
+```{r}
+
+#Load in Donnachas data for annotation
+
+cDNA_data_Seurat <- readRDS("SDR005_Combined_Geno_full_clustered.rds")
+Assays(cDNA_data_Seurat)
+
+#Get all matrices
+Geno_mat <- cDNA_data_Seurat@assays$Geno_filtered$counts %>% t() %>% as.data.frame()
+Geno_meta <- cDNA_data_Seurat@assays$Geno_filtered@meta.data
+
+Geno_list <- cDNA_data_Seurat@assays$Geno_filtered@misc
+list2env(Geno_list, envir = .GlobalEnv)
+
+metadata <- cDNA_data_Seurat@meta.data
+
+
+plot_save_dir <- "/Users/dominik.lindenhofer/Documents/Data_Local/Shared_Donnacha_SDR005!/SDR005_data_share/20240205_SDR005_SDRranger_gDNA-V4_cDNA-V5/SDR005_Stat_testing_MAST"
+
+
+```
+
+
+#Load testing data - DZ vs LZ
+```{r}
+
+group_colors_CellTypes <- c("Naïve" = "#00CED1", "LZ" = "#9BB0C1", "DZ" = "#51829B" ,"Mem IgM" = "#F6995C", 
+                  "Mem IgG" = "#EFBC9B", "Plasma" = "#948979", "Other" = "#D6DAC8", "B unassigned" = "#9CAFAA")
+
+
+
+Chi_FL7_one <- read.csv("SDR005_Stat_testing/Chi_FL7_Cell_Types_all.csv") %>% select(-X) %>% mutate(sample = "FL7")
+Chi_FL11_one <- read.csv("SDR005_Stat_testing/Chi_FL11_Cell_Types_all.csv") %>% select(-X) %>% mutate(sample = "FL11")
+Chi_GCB4_one <- read.csv("SDR005_Stat_testing/Chi_GCB4_Cell_Types_all.csv")  %>% select(-X) %>% mutate(sample = "GCB4")
+
+
+Chi_comb_one <- rbind(Chi_FL7_one, Chi_FL11_one, Chi_GCB4_one)
+
+
+#Remove WT - WT 1 ones - filter for DZ and LZ 
+
+Chi_comb_one <- Chi_comb_one %>% 
+  filter(State1 == "DZ" & State2 == "LZ") %>%
+  filter(!(State1_0_perc == 1 & State2_0_perc == 1)) %>%
+  mutate(across(everything(), ~ifelse(is.na(.), 0, .)))
+
+#set_cut_off for number of to filter out low variants 
+
+
+#Add info
+Chi_comb_one <- Chi_comb_one  %>% 
+  mutate(State1_edit_count = State1_1_count + State1_2_count,
+         State2_edit_count = State2_1_count + State2_2_count) %>%
+  mutate(edit_count_tot = State1_edit_count + State2_edit_count ) %>%
+  mutate(Significant = if_else(P_val_adj < 0.05, TRUE, FALSE))
+
+#Apply cutoff for variants
+
+cut_off = 30
+Chi_comb_one <- Chi_comb_one  %>% filter(edit_count_tot > cut_off)
+
+#Add delta Chi
+
+Chi_comb_one <- Chi_comb_one %>% mutate(delta_1_perc = State1_1_perc - State2_1_perc,
+                                        delta_2_perc = State1_2_perc - State2_2_perc)
+
+
+
+#Add Gene ID
+
+Geno_meta <- cDNA_data_Seurat@assays$Geno_filtered@meta.data
+to_add <- Geno_meta %>% select(ID_Geno, Gene_annot, Consequence)
+Chi_comb_one <- Chi_comb_one %>% left_join(to_add, by = c("Variant" = "ID_Geno" ))
+
+#Add to highlight
+
+Chi_comb_one  <- Chi_comb_one %>% mutate(target_to_plot_1 = case_when(Significant == TRUE & delta_1_perc > 0 ~ State1,
+                                                                      Significant == TRUE & delta_1_perc < 0 ~ State2))
+
+
+
+Chi_comb_one  <- Chi_comb_one %>% mutate(target_to_plot_2 = case_when(Significant == TRUE & delta_2_perc > 0 ~ State1,
+                                                                      Significant == TRUE & delta_2_perc < 0 ~ State2))
+
+
+to_order <- c("FL7", "FL11", "GCB4")
+
+Chi_comb_one$sample <- factor(Chi_comb_one$sample, levels = to_order)
+
+
+#Select significant ones 
+
+Chi_comb_one_sel <- Chi_comb_one %>% filter(Significant == TRUE)
+
+#Exclude IG variants
+Chi_comb_one_wo_IG <- Chi_comb_one %>% mutate(Gene_annot = if_else(str_detect(Gene_annot, "^IG"), NA_character_, Gene_annot)) %>% filter(!is.na(Gene_annot))
+
+
+#Select significant ones
+
+Chi_comb_one_wo_IG_sel <- Chi_comb_one_wo_IG %>% filter(Significant == TRUE)
+
+
+```
+
+
+
+
+
+#Testing MAST - test ones that are differentially enriched - LZ and DZ
+
+
+#FL7
+
+```{r}
+
+
+#Split Seurat by sample
+
+Idents(object = cDNA_data_Seurat) <- "Tumor_ID"
+table(Idents(cDNA_data_Seurat))
+cDNA_data_Seurat_split <- SplitObject(cDNA_data_Seurat, split.by = "ident")
+
+
+#Run for FL7 with Cell Types
+#For FL7
+
+#Split seurat by state
+Idents(object = cDNA_data_Seurat_split$FL7) <- "CellTypes"
+table(Idents(cDNA_data_Seurat_split$FL7))
+cDNA_data_Seurat_split_FL7 <- SplitObject(cDNA_data_Seurat_split$FL7, split.by = "ident")
+
+
+
+#LZ
+
+#Set cells for testing which state in 
+
+State="LZ"
+cells_State <- colnames(cDNA_data_Seurat_split_FL7[[State]])
+
+#Set filter 
+Geno_meta_filter <- Chi_comb_one_sel %>% filter(sample == "FL7")
+
+
+#Set empty List
+DE_test_out <- list()
+
+
+for (i in 1:nrow(Geno_meta_filter)) {
+  tryCatch({
+row_i <- Geno_meta_filter[i, ]
+ID_Geno_i <- row_i$Variant
+Target_i <- row_i$Gene_annot
+
+
+#Get Genotype information 
+Geno_i <- data.frame(Genotype = Geno_mat[cells_State,ID_Geno_i])
+rownames(Geno_i) <- cells_State
+
+
+#Get variable for testing 
+Geno_types_found_i <- Geno_i %>%
+  filter(!is.na(Genotype)) %>%
+  distinct(Genotype) %>%
+  arrange(Genotype) %>%
+  pull(1)
+
+counts <- Geno_i %>%
+  group_by(Genotype) %>%
+  summarise(Count = n()) %>%
+  arrange(Genotype)
+
+
+
+#Run conditional loop depending on what Genotypes are found
+
+if(all(Geno_types_found_i %in% c(0, 1, 2)) && length(Geno_types_found_i) > 2 && counts$Count[3] > 1) {
+
+#Define cells in groups for testing
+
+Geno_i_0 <- Geno_i %>% filter(Genotype == 0)
+Geno_i_1 <- Geno_i %>% filter(Genotype == 1)
+Geno_i_2 <- Geno_i %>% filter(Genotype == 2)
+
+cells_i_0 <- rownames(Geno_i_0)
+cells_i_1 <- rownames(Geno_i_1)
+cells_i_2 <- rownames(Geno_i_2)
+
+
+#Run differential testing 
+
+test_result_0_1 <- FindMarkers(object = cDNA_data_Seurat, assay = "RNA", slot = "data", ident.1 = cells_i_0, ident.2 = cells_i_1, test.use = "MAST", min.pct = 0, logfc.threshold = 0)
+test_result_0_2 <- FindMarkers(object = cDNA_data_Seurat, assay = "RNA", slot = "data", ident.1 = cells_i_0, ident.2 = cells_i_2, test.use = "MAST", min.pct = 0, logfc.threshold = 0)
+test_result_1_2 <- FindMarkers(object = cDNA_data_Seurat, assay = "RNA", slot = "data", ident.1 = cells_i_1, ident.2 = cells_i_2, test.use = "MAST", min.pct = 0, logfc.threshold = 0)
+
+#Add in information 
+
+#Get count number
+
+counts_0 <- counts %>% filter(Genotype == 0) %>% pull(2)
+counts_1 <- counts %>% filter(Genotype == 1) %>% pull(2)
+counts_2 <- counts %>% filter(Genotype == 2) %>% pull(2)
+
+#Add information to output
+
+test_result_0_1 <- test_result_0_1 %>% 
+                   mutate(Test = "0_1",
+                          ID_Geno = ID_Geno_i,
+                          Ncells_Cond1 = counts_0, 
+                          Ncells_Cond2 = counts_1,
+                          Gene = rownames(test_result_0_1))
+
+
+test_result_0_2 <- test_result_0_2 %>% 
+                   mutate(Test = "0_2",
+                          ID_Geno = ID_Geno_i,
+                          Ncells_Cond1 = counts_0, 
+                          Ncells_Cond2 = counts_2,
+                          Gene = rownames(test_result_0_2))
+
+test_result_1_2 <- test_result_1_2 %>% 
+                   mutate(Test = "1_2",
+                          ID_Geno = ID_Geno_i,
+                          Ncells_Cond1 = counts_1, 
+                          Ncells_Cond2 = counts_2,
+                          Gene = rownames(test_result_1_2))
+
+
+#Combine 
+
+test_result_i <- rbind(test_result_0_1, test_result_0_2, test_result_1_2)
+
+
+} else if(all(Geno_types_found_i %in% c(0, 1, 2)) && length(Geno_types_found_i) > 2 && counts$Count[3] < 2){ 
+  
+  
+   
+
+#Define cells in groups for testing
+Geno_i_0 <- Geno_i %>% filter(Genotype == 0)
+Geno_i_1 <- Geno_i %>% filter(Genotype == 1)
+
+cells_i_0 <- rownames(Geno_i_0)
+cells_i_1 <- rownames(Geno_i_1)
+
+
+
+#Run differential testing 
+test_result_0_1 <- FindMarkers(object = cDNA_data_Seurat, assay = "RNA", slot = "data", ident.1 = cells_i_0, ident.2 = cells_i_1, test.use = "MAST", min.pct = 0, logfc.threshold = 0)
+
+
+#Add in information 
+
+counts_0 <- counts %>% filter(Genotype == 0) %>% pull(2)
+counts_1 <- counts %>% filter(Genotype == 1) %>% pull(2)
+
+#Add information to output
+
+test_result_0_1 <- test_result_0_1 %>% 
+                   mutate(Test = "0_1",
+                          ID_Geno = ID_Geno_i,
+                          Ncells_Cond1 = counts_0, 
+                          Ncells_Cond2 = counts_1, 
+                          Gene = rownames(test_result_0_1))
+
+#Define output
+
+test_result_i <- test_result_0_1
+  
+}else if (all(Geno_types_found_i %in% c(0, 1)) && length(Geno_types_found_i) > 1) {
+
+  
+
+#Define cells in groups for testing
+Geno_i_0 <- Geno_i %>% filter(Genotype == 0)
+Geno_i_1 <- Geno_i %>% filter(Genotype == 1)
+
+cells_i_0 <- rownames(Geno_i_0)
+cells_i_1 <- rownames(Geno_i_1)
+
+
+
+#Run differential testing 
+test_result_0_1 <- FindMarkers(object = cDNA_data_Seurat, assay = "RNA", slot = "data", ident.1 = cells_i_0, ident.2 = cells_i_1, test.use = "MAST", min.pct = 0, logfc.threshold = 0)
+
+
+#Add in information 
+
+counts_0 <- counts %>% filter(Genotype == 0) %>% pull(2)
+counts_1 <- counts %>% filter(Genotype == 1) %>% pull(2)
+
+#Add information to output
+
+test_result_0_1 <- test_result_0_1 %>% 
+                   mutate(Test = "0_1",
+                          ID_Geno = ID_Geno_i,
+                          Ncells_Cond1 = counts_0, 
+                          Ncells_Cond2 = counts_1, 
+                          Gene = rownames(test_result_0_1))
+
+
+
+#Define output
+
+test_result_i <- test_result_0_1
+
+
+}else{
+
+        # Handle the case when Geno_types_found_i doesn't meet the conditions
+      message("Genotype types do not meet conditions for row ", i)
+      # Optionally, you can add specific handling code here
+      next  # Skip to the next iteration 
+  
+  
+}
+
+#Add list to ouput
+DE_test_out[[i]] <- bind_rows(test_result_i)
+
+
+  
+  }, error = function(e) {
+    # This function is called if an error occurs
+    message(paste("Error in iteration", i, ":", e$message))
+    # Optionally, you can do other error handling here
+  })
+}
+
+
+
+# Combine all test results into a single dataframe
+DE_test_out <- bind_rows(DE_test_out)
+DE_test_out <- unique(DE_test_out)
+
+write.csv(DE_test_out, file = "SDR005_Stat_testing_MAST/SDR005_DE_test_out_FL7_LZ.csv", quote = FALSE, row.names = FALSE, col.names = TRUE)
+
+
+
+
+#DZ
+
+
+#Set cells for testing which state in 
+
+State="DZ"
+cells_State <- colnames(cDNA_data_Seurat_split_FL7[[State]])
+
+#Set filter 
+Geno_meta_filter <- Chi_comb_one_sel %>% filter(sample == "FL7")
+
+
+#Set empty List
+DE_test_out <- list()
+
+
+for (i in 1:nrow(Geno_meta_filter)) {
+  tryCatch({
+row_i <- Geno_meta_filter[i, ]
+ID_Geno_i <- row_i$Variant
+Target_i <- row_i$Gene_annot
+
+
+#Get Genotype information 
+Geno_i <- data.frame(Genotype = Geno_mat[cells_State,ID_Geno_i])
+rownames(Geno_i) <- cells_State
+
+
+#Get variable for testing 
+Geno_types_found_i <- Geno_i %>%
+  filter(!is.na(Genotype)) %>%
+  distinct(Genotype) %>%
+  arrange(Genotype) %>%
+  pull(1)
+
+counts <- Geno_i %>%
+  group_by(Genotype) %>%
+  summarise(Count = n()) %>%
+  arrange(Genotype)
+
+
+
+#Run conditional loop depending on what Genotypes are found
+
+if(all(Geno_types_found_i %in% c(0, 1, 2)) && length(Geno_types_found_i) > 2 && counts$Count[3] > 1) {
+
+#Define cells in groups for testing
+
+Geno_i_0 <- Geno_i %>% filter(Genotype == 0)
+Geno_i_1 <- Geno_i %>% filter(Genotype == 1)
+Geno_i_2 <- Geno_i %>% filter(Genotype == 2)
+
+cells_i_0 <- rownames(Geno_i_0)
+cells_i_1 <- rownames(Geno_i_1)
+cells_i_2 <- rownames(Geno_i_2)
+
+
+#Run differential testing 
+
+test_result_0_1 <- FindMarkers(object = cDNA_data_Seurat, assay = "RNA", slot = "data", ident.1 = cells_i_0, ident.2 = cells_i_1, test.use = "MAST", min.pct = 0, logfc.threshold = 0)
+test_result_0_2 <- FindMarkers(object = cDNA_data_Seurat, assay = "RNA", slot = "data", ident.1 = cells_i_0, ident.2 = cells_i_2, test.use = "MAST", min.pct = 0, logfc.threshold = 0)
+test_result_1_2 <- FindMarkers(object = cDNA_data_Seurat, assay = "RNA", slot = "data", ident.1 = cells_i_1, ident.2 = cells_i_2, test.use = "MAST", min.pct = 0, logfc.threshold = 0)
+
+#Add in information 
+
+#Get count number
+
+counts_0 <- counts %>% filter(Genotype == 0) %>% pull(2)
+counts_1 <- counts %>% filter(Genotype == 1) %>% pull(2)
+counts_2 <- counts %>% filter(Genotype == 2) %>% pull(2)
+
+#Add information to output
+
+test_result_0_1 <- test_result_0_1 %>% 
+                   mutate(Test = "0_1",
+                          ID_Geno = ID_Geno_i,
+                          Ncells_Cond1 = counts_0, 
+                          Ncells_Cond2 = counts_1,
+                          Gene = rownames(test_result_0_1))
+
+
+test_result_0_2 <- test_result_0_2 %>% 
+                   mutate(Test = "0_2",
+                          ID_Geno = ID_Geno_i,
+                          Ncells_Cond1 = counts_0, 
+                          Ncells_Cond2 = counts_2,
+                          Gene = rownames(test_result_0_2))
+
+test_result_1_2 <- test_result_1_2 %>% 
+                   mutate(Test = "1_2",
+                          ID_Geno = ID_Geno_i,
+                          Ncells_Cond1 = counts_1, 
+                          Ncells_Cond2 = counts_2,
+                          Gene = rownames(test_result_1_2))
+
+
+#Combine 
+
+test_result_i <- rbind(test_result_0_1, test_result_0_2, test_result_1_2)
+
+
+} else if(all(Geno_types_found_i %in% c(0, 1, 2)) && length(Geno_types_found_i) > 2 && counts$Count[3] < 2){ 
+  
+  
+   
+
+#Define cells in groups for testing
+Geno_i_0 <- Geno_i %>% filter(Genotype == 0)
+Geno_i_1 <- Geno_i %>% filter(Genotype == 1)
+
+cells_i_0 <- rownames(Geno_i_0)
+cells_i_1 <- rownames(Geno_i_1)
+
+
+
+#Run differential testing 
+test_result_0_1 <- FindMarkers(object = cDNA_data_Seurat, assay = "RNA", slot = "data", ident.1 = cells_i_0, ident.2 = cells_i_1, test.use = "MAST", min.pct = 0, logfc.threshold = 0)
+
+
+#Add in information 
+
+counts_0 <- counts %>% filter(Genotype == 0) %>% pull(2)
+counts_1 <- counts %>% filter(Genotype == 1) %>% pull(2)
+
+#Add information to output
+
+test_result_0_1 <- test_result_0_1 %>% 
+                   mutate(Test = "0_1",
+                          ID_Geno = ID_Geno_i,
+                          Ncells_Cond1 = counts_0, 
+                          Ncells_Cond2 = counts_1, 
+                          Gene = rownames(test_result_0_1))
+
+#Define output
+
+test_result_i <- test_result_0_1
+  
+}else if (all(Geno_types_found_i %in% c(0, 1)) && length(Geno_types_found_i) > 1) {
+
+  
+
+#Define cells in groups for testing
+Geno_i_0 <- Geno_i %>% filter(Genotype == 0)
+Geno_i_1 <- Geno_i %>% filter(Genotype == 1)
+
+cells_i_0 <- rownames(Geno_i_0)
+cells_i_1 <- rownames(Geno_i_1)
+
+
+
+#Run differential testing 
+test_result_0_1 <- FindMarkers(object = cDNA_data_Seurat, assay = "RNA", slot = "data", ident.1 = cells_i_0, ident.2 = cells_i_1, test.use = "MAST", min.pct = 0, logfc.threshold = 0)
+
+
+#Add in information 
+
+counts_0 <- counts %>% filter(Genotype == 0) %>% pull(2)
+counts_1 <- counts %>% filter(Genotype == 1) %>% pull(2)
+
+#Add information to output
+
+test_result_0_1 <- test_result_0_1 %>% 
+                   mutate(Test = "0_1",
+                          ID_Geno = ID_Geno_i,
+                          Ncells_Cond1 = counts_0, 
+                          Ncells_Cond2 = counts_1, 
+                          Gene = rownames(test_result_0_1))
+
+
+
+#Define output
+
+test_result_i <- test_result_0_1
+
+
+}else{
+
+        # Handle the case when Geno_types_found_i doesn't meet the conditions
+      message("Genotype types do not meet conditions for row ", i)
+      # Optionally, you can add specific handling code here
+      next  # Skip to the next iteration 
+  
+  
+}
+
+#Add list to ouput
+DE_test_out[[i]] <- bind_rows(test_result_i)
+
+
+  
+  }, error = function(e) {
+    # This function is called if an error occurs
+    message(paste("Error in iteration", i, ":", e$message))
+    # Optionally, you can do other error handling here
+  })
+}
+
+
+
+# Combine all test results into a single dataframe
+DE_test_out <- bind_rows(DE_test_out)
+DE_test_out <- unique(DE_test_out)
+
+write.csv(DE_test_out, file = "SDR005_Stat_testing_MAST/SDR005_DE_test_out_FL7_DZ.csv", quote = FALSE, row.names = FALSE, col.names = TRUE)
+
+
+
+
+```
+
+
+
+
+
+#FL11
+
+```{r}
+
+
+#Split Seurat by sample
+
+Idents(object = cDNA_data_Seurat) <- "Tumor_ID"
+table(Idents(cDNA_data_Seurat))
+cDNA_data_Seurat_split <- SplitObject(cDNA_data_Seurat, split.by = "ident")
+
+
+#Run for FL11 with Cell Types
+#For FL11
+
+#Split seurat by state
+Idents(object = cDNA_data_Seurat_split$FL11) <- "CellTypes"
+table(Idents(cDNA_data_Seurat_split$FL11))
+cDNA_data_Seurat_split_FL11 <- SplitObject(cDNA_data_Seurat_split$FL11, split.by = "ident")
+
+
+
+#LZ
+
+#Set cells for testing which state in 
+
+State="LZ"
+cells_State <- colnames(cDNA_data_Seurat_split_FL11[[State]])
+
+#Set filter 
+Geno_meta_filter <- Chi_comb_one_sel %>% filter(sample == "FL11")
+
+
+#Set empty List
+DE_test_out <- list()
+
+
+for (i in 1:nrow(Geno_meta_filter)) {
+  tryCatch({
+row_i <- Geno_meta_filter[i, ]
+ID_Geno_i <- row_i$Variant
+Target_i <- row_i$Gene_annot
+
+
+#Get Genotype information 
+Geno_i <- data.frame(Genotype = Geno_mat[cells_State,ID_Geno_i])
+rownames(Geno_i) <- cells_State
+
+
+#Get variable for testing 
+Geno_types_found_i <- Geno_i %>%
+  filter(!is.na(Genotype)) %>%
+  distinct(Genotype) %>%
+  arrange(Genotype) %>%
+  pull(1)
+
+counts <- Geno_i %>%
+  group_by(Genotype) %>%
+  summarise(Count = n()) %>%
+  arrange(Genotype)
+
+
+
+#Run conditional loop depending on what Genotypes are found
+
+if(all(Geno_types_found_i %in% c(0, 1, 2)) && length(Geno_types_found_i) > 2 && counts$Count[3] > 1) {
+
+#Define cells in groups for testing
+
+Geno_i_0 <- Geno_i %>% filter(Genotype == 0)
+Geno_i_1 <- Geno_i %>% filter(Genotype == 1)
+Geno_i_2 <- Geno_i %>% filter(Genotype == 2)
+
+cells_i_0 <- rownames(Geno_i_0)
+cells_i_1 <- rownames(Geno_i_1)
+cells_i_2 <- rownames(Geno_i_2)
+
+
+#Run differential testing 
+
+test_result_0_1 <- FindMarkers(object = cDNA_data_Seurat, assay = "RNA", slot = "data", ident.1 = cells_i_0, ident.2 = cells_i_1, test.use = "MAST", min.pct = 0, logfc.threshold = 0)
+test_result_0_2 <- FindMarkers(object = cDNA_data_Seurat, assay = "RNA", slot = "data", ident.1 = cells_i_0, ident.2 = cells_i_2, test.use = "MAST", min.pct = 0, logfc.threshold = 0)
+test_result_1_2 <- FindMarkers(object = cDNA_data_Seurat, assay = "RNA", slot = "data", ident.1 = cells_i_1, ident.2 = cells_i_2, test.use = "MAST", min.pct = 0, logfc.threshold = 0)
+
+#Add in information 
+
+#Get count number
+
+counts_0 <- counts %>% filter(Genotype == 0) %>% pull(2)
+counts_1 <- counts %>% filter(Genotype == 1) %>% pull(2)
+counts_2 <- counts %>% filter(Genotype == 2) %>% pull(2)
+
+#Add information to output
+
+test_result_0_1 <- test_result_0_1 %>% 
+                   mutate(Test = "0_1",
+                          ID_Geno = ID_Geno_i,
+                          Ncells_Cond1 = counts_0, 
+                          Ncells_Cond2 = counts_1,
+                          Gene = rownames(test_result_0_1))
+
+
+test_result_0_2 <- test_result_0_2 %>% 
+                   mutate(Test = "0_2",
+                          ID_Geno = ID_Geno_i,
+                          Ncells_Cond1 = counts_0, 
+                          Ncells_Cond2 = counts_2,
+                          Gene = rownames(test_result_0_2))
+
+test_result_1_2 <- test_result_1_2 %>% 
+                   mutate(Test = "1_2",
+                          ID_Geno = ID_Geno_i,
+                          Ncells_Cond1 = counts_1, 
+                          Ncells_Cond2 = counts_2,
+                          Gene = rownames(test_result_1_2))
+
+
+#Combine 
+
+test_result_i <- rbind(test_result_0_1, test_result_0_2, test_result_1_2)
+
+
+} else if(all(Geno_types_found_i %in% c(0, 1, 2)) && length(Geno_types_found_i) > 2 && counts$Count[3] < 2){ 
+  
+  
+   
+
+#Define cells in groups for testing
+Geno_i_0 <- Geno_i %>% filter(Genotype == 0)
+Geno_i_1 <- Geno_i %>% filter(Genotype == 1)
+
+cells_i_0 <- rownames(Geno_i_0)
+cells_i_1 <- rownames(Geno_i_1)
+
+
+
+#Run differential testing 
+test_result_0_1 <- FindMarkers(object = cDNA_data_Seurat, assay = "RNA", slot = "data", ident.1 = cells_i_0, ident.2 = cells_i_1, test.use = "MAST", min.pct = 0, logfc.threshold = 0)
+
+
+#Add in information 
+
+counts_0 <- counts %>% filter(Genotype == 0) %>% pull(2)
+counts_1 <- counts %>% filter(Genotype == 1) %>% pull(2)
+
+#Add information to output
+
+test_result_0_1 <- test_result_0_1 %>% 
+                   mutate(Test = "0_1",
+                          ID_Geno = ID_Geno_i,
+                          Ncells_Cond1 = counts_0, 
+                          Ncells_Cond2 = counts_1, 
+                          Gene = rownames(test_result_0_1))
+
+#Define output
+
+test_result_i <- test_result_0_1
+  
+}else if (all(Geno_types_found_i %in% c(0, 1)) && length(Geno_types_found_i) > 1) {
+
+  
+
+#Define cells in groups for testing
+Geno_i_0 <- Geno_i %>% filter(Genotype == 0)
+Geno_i_1 <- Geno_i %>% filter(Genotype == 1)
+
+cells_i_0 <- rownames(Geno_i_0)
+cells_i_1 <- rownames(Geno_i_1)
+
+
+
+#Run differential testing 
+test_result_0_1 <- FindMarkers(object = cDNA_data_Seurat, assay = "RNA", slot = "data", ident.1 = cells_i_0, ident.2 = cells_i_1, test.use = "MAST", min.pct = 0, logfc.threshold = 0)
+
+
+#Add in information 
+
+counts_0 <- counts %>% filter(Genotype == 0) %>% pull(2)
+counts_1 <- counts %>% filter(Genotype == 1) %>% pull(2)
+
+#Add information to output
+
+test_result_0_1 <- test_result_0_1 %>% 
+                   mutate(Test = "0_1",
+                          ID_Geno = ID_Geno_i,
+                          Ncells_Cond1 = counts_0, 
+                          Ncells_Cond2 = counts_1, 
+                          Gene = rownames(test_result_0_1))
+
+
+
+#Define output
+
+test_result_i <- test_result_0_1
+
+
+}else{
+
+        # Handle the case when Geno_types_found_i doesn't meet the conditions
+      message("Genotype types do not meet conditions for row ", i)
+      # Optionally, you can add specific handling code here
+      next  # Skip to the next iteration 
+  
+  
+}
+
+#Add list to ouput
+DE_test_out[[i]] <- bind_rows(test_result_i)
+
+
+  
+  }, error = function(e) {
+    # This function is called if an error occurs
+    message(paste("Error in iteration", i, ":", e$message))
+    # Optionally, you can do other error handling here
+  })
+}
+
+
+
+# Combine all test results into a single dataframe
+DE_test_out <- bind_rows(DE_test_out)
+DE_test_out <- unique(DE_test_out)
+
+write.csv(DE_test_out, file = "SDR005_Stat_testing_MAST/SDR005_DE_test_out_FL11_LZ.csv", quote = FALSE, row.names = FALSE, col.names = TRUE)
+
+
+
+
+#DZ
+
+
+#Set cells for testing which state in 
+
+State="DZ"
+cells_State <- colnames(cDNA_data_Seurat_split_FL11[[State]])
+
+#Set filter 
+Geno_meta_filter <- Chi_comb_one_sel %>% filter(sample == "FL11")
+
+
+#Set empty List
+DE_test_out <- list()
+
+
+for (i in 1:nrow(Geno_meta_filter)) {
+  tryCatch({
+row_i <- Geno_meta_filter[i, ]
+ID_Geno_i <- row_i$Variant
+Target_i <- row_i$Gene_annot
+
+
+#Get Genotype information 
+Geno_i <- data.frame(Genotype = Geno_mat[cells_State,ID_Geno_i])
+rownames(Geno_i) <- cells_State
+
+
+#Get variable for testing 
+Geno_types_found_i <- Geno_i %>%
+  filter(!is.na(Genotype)) %>%
+  distinct(Genotype) %>%
+  arrange(Genotype) %>%
+  pull(1)
+
+counts <- Geno_i %>%
+  group_by(Genotype) %>%
+  summarise(Count = n()) %>%
+  arrange(Genotype)
+
+
+
+#Run conditional loop depending on what Genotypes are found
+
+if(all(Geno_types_found_i %in% c(0, 1, 2)) && length(Geno_types_found_i) > 2 && counts$Count[3] > 1) {
+
+#Define cells in groups for testing
+
+Geno_i_0 <- Geno_i %>% filter(Genotype == 0)
+Geno_i_1 <- Geno_i %>% filter(Genotype == 1)
+Geno_i_2 <- Geno_i %>% filter(Genotype == 2)
+
+cells_i_0 <- rownames(Geno_i_0)
+cells_i_1 <- rownames(Geno_i_1)
+cells_i_2 <- rownames(Geno_i_2)
+
+
+#Run differential testing 
+
+test_result_0_1 <- FindMarkers(object = cDNA_data_Seurat, assay = "RNA", slot = "data", ident.1 = cells_i_0, ident.2 = cells_i_1, test.use = "MAST", min.pct = 0, logfc.threshold = 0)
+test_result_0_2 <- FindMarkers(object = cDNA_data_Seurat, assay = "RNA", slot = "data", ident.1 = cells_i_0, ident.2 = cells_i_2, test.use = "MAST", min.pct = 0, logfc.threshold = 0)
+test_result_1_2 <- FindMarkers(object = cDNA_data_Seurat, assay = "RNA", slot = "data", ident.1 = cells_i_1, ident.2 = cells_i_2, test.use = "MAST", min.pct = 0, logfc.threshold = 0)
+
+#Add in information 
+
+#Get count number
+
+counts_0 <- counts %>% filter(Genotype == 0) %>% pull(2)
+counts_1 <- counts %>% filter(Genotype == 1) %>% pull(2)
+counts_2 <- counts %>% filter(Genotype == 2) %>% pull(2)
+
+#Add information to output
+
+test_result_0_1 <- test_result_0_1 %>% 
+                   mutate(Test = "0_1",
+                          ID_Geno = ID_Geno_i,
+                          Ncells_Cond1 = counts_0, 
+                          Ncells_Cond2 = counts_1,
+                          Gene = rownames(test_result_0_1))
+
+
+test_result_0_2 <- test_result_0_2 %>% 
+                   mutate(Test = "0_2",
+                          ID_Geno = ID_Geno_i,
+                          Ncells_Cond1 = counts_0, 
+                          Ncells_Cond2 = counts_2,
+                          Gene = rownames(test_result_0_2))
+
+test_result_1_2 <- test_result_1_2 %>% 
+                   mutate(Test = "1_2",
+                          ID_Geno = ID_Geno_i,
+                          Ncells_Cond1 = counts_1, 
+                          Ncells_Cond2 = counts_2,
+                          Gene = rownames(test_result_1_2))
+
+
+#Combine 
+
+test_result_i <- rbind(test_result_0_1, test_result_0_2, test_result_1_2)
+
+
+} else if(all(Geno_types_found_i %in% c(0, 1, 2)) && length(Geno_types_found_i) > 2 && counts$Count[3] < 2){ 
+  
+  
+   
+
+#Define cells in groups for testing
+Geno_i_0 <- Geno_i %>% filter(Genotype == 0)
+Geno_i_1 <- Geno_i %>% filter(Genotype == 1)
+
+cells_i_0 <- rownames(Geno_i_0)
+cells_i_1 <- rownames(Geno_i_1)
+
+
+
+#Run differential testing 
+test_result_0_1 <- FindMarkers(object = cDNA_data_Seurat, assay = "RNA", slot = "data", ident.1 = cells_i_0, ident.2 = cells_i_1, test.use = "MAST", min.pct = 0, logfc.threshold = 0)
+
+
+#Add in information 
+
+counts_0 <- counts %>% filter(Genotype == 0) %>% pull(2)
+counts_1 <- counts %>% filter(Genotype == 1) %>% pull(2)
+
+#Add information to output
+
+test_result_0_1 <- test_result_0_1 %>% 
+                   mutate(Test = "0_1",
+                          ID_Geno = ID_Geno_i,
+                          Ncells_Cond1 = counts_0, 
+                          Ncells_Cond2 = counts_1, 
+                          Gene = rownames(test_result_0_1))
+
+#Define output
+
+test_result_i <- test_result_0_1
+  
+}else if (all(Geno_types_found_i %in% c(0, 1)) && length(Geno_types_found_i) > 1) {
+
+  
+
+#Define cells in groups for testing
+Geno_i_0 <- Geno_i %>% filter(Genotype == 0)
+Geno_i_1 <- Geno_i %>% filter(Genotype == 1)
+
+cells_i_0 <- rownames(Geno_i_0)
+cells_i_1 <- rownames(Geno_i_1)
+
+
+
+#Run differential testing 
+test_result_0_1 <- FindMarkers(object = cDNA_data_Seurat, assay = "RNA", slot = "data", ident.1 = cells_i_0, ident.2 = cells_i_1, test.use = "MAST", min.pct = 0, logfc.threshold = 0)
+
+
+#Add in information 
+
+counts_0 <- counts %>% filter(Genotype == 0) %>% pull(2)
+counts_1 <- counts %>% filter(Genotype == 1) %>% pull(2)
+
+#Add information to output
+
+test_result_0_1 <- test_result_0_1 %>% 
+                   mutate(Test = "0_1",
+                          ID_Geno = ID_Geno_i,
+                          Ncells_Cond1 = counts_0, 
+                          Ncells_Cond2 = counts_1, 
+                          Gene = rownames(test_result_0_1))
+
+
+
+#Define output
+
+test_result_i <- test_result_0_1
+
+
+}else{
+
+        # Handle the case when Geno_types_found_i doesn't meet the conditions
+      message("Genotype types do not meet conditions for row ", i)
+      # Optionally, you can add specific handling code here
+      next  # Skip to the next iteration 
+  
+  
+}
+
+#Add list to ouput
+DE_test_out[[i]] <- bind_rows(test_result_i)
+
+
+  
+  }, error = function(e) {
+    # This function is called if an error occurs
+    message(paste("Error in iteration", i, ":", e$message))
+    # Optionally, you can do other error handling here
+  })
+}
+
+
+
+# Combine all test results into a single dataframe
+DE_test_out <- bind_rows(DE_test_out)
+DE_test_out <- unique(DE_test_out)
+
+write.csv(DE_test_out, file = "SDR005_Stat_testing_MAST/SDR005_DE_test_out_FL11_DZ.csv", quote = FALSE, row.names = FALSE, col.names = TRUE)
+
+
+
+```
+
+
+
+
+
+#GCB4
+
+```{r}
+
+
+#Split Seurat by sample
+
+Idents(object = cDNA_data_Seurat) <- "Tumor_ID"
+table(Idents(cDNA_data_Seurat))
+cDNA_data_Seurat_split <- SplitObject(cDNA_data_Seurat, split.by = "ident")
+
+
+#Run for GCB4 with Cell Types
+#For GCB4
+
+#Split seurat by state
+Idents(object = cDNA_data_Seurat_split$GCB4) <- "CellTypes"
+table(Idents(cDNA_data_Seurat_split$GCB4))
+cDNA_data_Seurat_split_GCB4 <- SplitObject(cDNA_data_Seurat_split$GCB4, split.by = "ident")
+
+
+
+#LZ
+
+#Set cells for testing which state in 
+
+State="LZ"
+cells_State <- colnames(cDNA_data_Seurat_split_GCB4[[State]])
+
+#Set filter 
+Geno_meta_filter <- Chi_comb_one_sel %>% filter(sample == "GCB4")
+
+
+#Set empty List
+DE_test_out <- list()
+
+
+for (i in 1:nrow(Geno_meta_filter)) {
+  tryCatch({
+row_i <- Geno_meta_filter[i, ]
+ID_Geno_i <- row_i$Variant
+Target_i <- row_i$Gene_annot
+
+
+#Get Genotype information 
+Geno_i <- data.frame(Genotype = Geno_mat[cells_State,ID_Geno_i])
+rownames(Geno_i) <- cells_State
+
+
+#Get variable for testing 
+Geno_types_found_i <- Geno_i %>%
+  filter(!is.na(Genotype)) %>%
+  distinct(Genotype) %>%
+  arrange(Genotype) %>%
+  pull(1)
+
+counts <- Geno_i %>%
+  group_by(Genotype) %>%
+  summarise(Count = n()) %>%
+  arrange(Genotype)
+
+
+
+#Run conditional loop depending on what Genotypes are found
+
+if(all(Geno_types_found_i %in% c(0, 1, 2)) && length(Geno_types_found_i) > 2 && counts$Count[3] > 1) {
+
+#Define cells in groups for testing
+
+Geno_i_0 <- Geno_i %>% filter(Genotype == 0)
+Geno_i_1 <- Geno_i %>% filter(Genotype == 1)
+Geno_i_2 <- Geno_i %>% filter(Genotype == 2)
+
+cells_i_0 <- rownames(Geno_i_0)
+cells_i_1 <- rownames(Geno_i_1)
+cells_i_2 <- rownames(Geno_i_2)
+
+
+#Run differential testing 
+
+test_result_0_1 <- FindMarkers(object = cDNA_data_Seurat, assay = "RNA", slot = "data", ident.1 = cells_i_0, ident.2 = cells_i_1, test.use = "MAST", min.pct = 0, logfc.threshold = 0)
+test_result_0_2 <- FindMarkers(object = cDNA_data_Seurat, assay = "RNA", slot = "data", ident.1 = cells_i_0, ident.2 = cells_i_2, test.use = "MAST", min.pct = 0, logfc.threshold = 0)
+test_result_1_2 <- FindMarkers(object = cDNA_data_Seurat, assay = "RNA", slot = "data", ident.1 = cells_i_1, ident.2 = cells_i_2, test.use = "MAST", min.pct = 0, logfc.threshold = 0)
+
+#Add in information 
+
+#Get count number
+
+counts_0 <- counts %>% filter(Genotype == 0) %>% pull(2)
+counts_1 <- counts %>% filter(Genotype == 1) %>% pull(2)
+counts_2 <- counts %>% filter(Genotype == 2) %>% pull(2)
+
+#Add information to output
+
+test_result_0_1 <- test_result_0_1 %>% 
+                   mutate(Test = "0_1",
+                          ID_Geno = ID_Geno_i,
+                          Ncells_Cond1 = counts_0, 
+                          Ncells_Cond2 = counts_1,
+                          Gene = rownames(test_result_0_1))
+
+
+test_result_0_2 <- test_result_0_2 %>% 
+                   mutate(Test = "0_2",
+                          ID_Geno = ID_Geno_i,
+                          Ncells_Cond1 = counts_0, 
+                          Ncells_Cond2 = counts_2,
+                          Gene = rownames(test_result_0_2))
+
+test_result_1_2 <- test_result_1_2 %>% 
+                   mutate(Test = "1_2",
+                          ID_Geno = ID_Geno_i,
+                          Ncells_Cond1 = counts_1, 
+                          Ncells_Cond2 = counts_2,
+                          Gene = rownames(test_result_1_2))
+
+
+#Combine 
+
+test_result_i <- rbind(test_result_0_1, test_result_0_2, test_result_1_2)
+
+
+} else if(all(Geno_types_found_i %in% c(0, 1, 2)) && length(Geno_types_found_i) > 2 && counts$Count[3] < 2){ 
+  
+  
+   
+
+#Define cells in groups for testing
+Geno_i_0 <- Geno_i %>% filter(Genotype == 0)
+Geno_i_1 <- Geno_i %>% filter(Genotype == 1)
+
+cells_i_0 <- rownames(Geno_i_0)
+cells_i_1 <- rownames(Geno_i_1)
+
+
+
+#Run differential testing 
+test_result_0_1 <- FindMarkers(object = cDNA_data_Seurat, assay = "RNA", slot = "data", ident.1 = cells_i_0, ident.2 = cells_i_1, test.use = "MAST", min.pct = 0, logfc.threshold = 0)
+
+
+#Add in information 
+
+counts_0 <- counts %>% filter(Genotype == 0) %>% pull(2)
+counts_1 <- counts %>% filter(Genotype == 1) %>% pull(2)
+
+#Add information to output
+
+test_result_0_1 <- test_result_0_1 %>% 
+                   mutate(Test = "0_1",
+                          ID_Geno = ID_Geno_i,
+                          Ncells_Cond1 = counts_0, 
+                          Ncells_Cond2 = counts_1, 
+                          Gene = rownames(test_result_0_1))
+
+#Define output
+
+test_result_i <- test_result_0_1
+  
+}else if (all(Geno_types_found_i %in% c(0, 1)) && length(Geno_types_found_i) > 1) {
+
+  
+
+#Define cells in groups for testing
+Geno_i_0 <- Geno_i %>% filter(Genotype == 0)
+Geno_i_1 <- Geno_i %>% filter(Genotype == 1)
+
+cells_i_0 <- rownames(Geno_i_0)
+cells_i_1 <- rownames(Geno_i_1)
+
+
+
+#Run differential testing 
+test_result_0_1 <- FindMarkers(object = cDNA_data_Seurat, assay = "RNA", slot = "data", ident.1 = cells_i_0, ident.2 = cells_i_1, test.use = "MAST", min.pct = 0, logfc.threshold = 0)
+
+
+#Add in information 
+
+counts_0 <- counts %>% filter(Genotype == 0) %>% pull(2)
+counts_1 <- counts %>% filter(Genotype == 1) %>% pull(2)
+
+#Add information to output
+
+test_result_0_1 <- test_result_0_1 %>% 
+                   mutate(Test = "0_1",
+                          ID_Geno = ID_Geno_i,
+                          Ncells_Cond1 = counts_0, 
+                          Ncells_Cond2 = counts_1, 
+                          Gene = rownames(test_result_0_1))
+
+
+
+#Define output
+
+test_result_i <- test_result_0_1
+
+
+}else{
+
+        # Handle the case when Geno_types_found_i doesn't meet the conditions
+      message("Genotype types do not meet conditions for row ", i)
+      # Optionally, you can add specific handling code here
+      next  # Skip to the next iteration 
+  
+  
+}
+
+#Add list to ouput
+DE_test_out[[i]] <- bind_rows(test_result_i)
+
+
+  
+  }, error = function(e) {
+    # This function is called if an error occurs
+    message(paste("Error in iteration", i, ":", e$message))
+    # Optionally, you can do other error handling here
+  })
+}
+
+
+
+# Combine all test results into a single dataframe
+DE_test_out <- bind_rows(DE_test_out)
+DE_test_out <- unique(DE_test_out)
+
+write.csv(DE_test_out, file = "SDR005_Stat_testing_MAST/SDR005_DE_test_out_GCB4_LZ.csv", quote = FALSE, row.names = FALSE, col.names = TRUE)
+
+
+
+
+#DZ
+
+
+#Set cells for testing which state in 
+
+State="DZ"
+cells_State <- colnames(cDNA_data_Seurat_split_GCB4[[State]])
+
+#Set filter 
+Geno_meta_filter <- Chi_comb_one_sel %>% filter(sample == "GCB4")
+
+
+#Set empty List
+DE_test_out <- list()
+
+
+for (i in 1:nrow(Geno_meta_filter)) {
+  tryCatch({
+row_i <- Geno_meta_filter[i, ]
+ID_Geno_i <- row_i$Variant
+Target_i <- row_i$Gene_annot
+
+
+#Get Genotype information 
+Geno_i <- data.frame(Genotype = Geno_mat[cells_State,ID_Geno_i])
+rownames(Geno_i) <- cells_State
+
+
+#Get variable for testing 
+Geno_types_found_i <- Geno_i %>%
+  filter(!is.na(Genotype)) %>%
+  distinct(Genotype) %>%
+  arrange(Genotype) %>%
+  pull(1)
+
+counts <- Geno_i %>%
+  group_by(Genotype) %>%
+  summarise(Count = n()) %>%
+  arrange(Genotype)
+
+
+
+#Run conditional loop depending on what Genotypes are found
+
+if(all(Geno_types_found_i %in% c(0, 1, 2)) && length(Geno_types_found_i) > 2 && counts$Count[3] > 1) {
+
+#Define cells in groups for testing
+
+Geno_i_0 <- Geno_i %>% filter(Genotype == 0)
+Geno_i_1 <- Geno_i %>% filter(Genotype == 1)
+Geno_i_2 <- Geno_i %>% filter(Genotype == 2)
+
+cells_i_0 <- rownames(Geno_i_0)
+cells_i_1 <- rownames(Geno_i_1)
+cells_i_2 <- rownames(Geno_i_2)
+
+
+#Run differential testing 
+
+test_result_0_1 <- FindMarkers(object = cDNA_data_Seurat, assay = "RNA", slot = "data", ident.1 = cells_i_0, ident.2 = cells_i_1, test.use = "MAST", min.pct = 0, logfc.threshold = 0)
+test_result_0_2 <- FindMarkers(object = cDNA_data_Seurat, assay = "RNA", slot = "data", ident.1 = cells_i_0, ident.2 = cells_i_2, test.use = "MAST", min.pct = 0, logfc.threshold = 0)
+test_result_1_2 <- FindMarkers(object = cDNA_data_Seurat, assay = "RNA", slot = "data", ident.1 = cells_i_1, ident.2 = cells_i_2, test.use = "MAST", min.pct = 0, logfc.threshold = 0)
+
+#Add in information 
+
+#Get count number
+
+counts_0 <- counts %>% filter(Genotype == 0) %>% pull(2)
+counts_1 <- counts %>% filter(Genotype == 1) %>% pull(2)
+counts_2 <- counts %>% filter(Genotype == 2) %>% pull(2)
+
+#Add information to output
+
+test_result_0_1 <- test_result_0_1 %>% 
+                   mutate(Test = "0_1",
+                          ID_Geno = ID_Geno_i,
+                          Ncells_Cond1 = counts_0, 
+                          Ncells_Cond2 = counts_1,
+                          Gene = rownames(test_result_0_1))
+
+
+test_result_0_2 <- test_result_0_2 %>% 
+                   mutate(Test = "0_2",
+                          ID_Geno = ID_Geno_i,
+                          Ncells_Cond1 = counts_0, 
+                          Ncells_Cond2 = counts_2,
+                          Gene = rownames(test_result_0_2))
+
+test_result_1_2 <- test_result_1_2 %>% 
+                   mutate(Test = "1_2",
+                          ID_Geno = ID_Geno_i,
+                          Ncells_Cond1 = counts_1, 
+                          Ncells_Cond2 = counts_2,
+                          Gene = rownames(test_result_1_2))
+
+
+#Combine 
+
+test_result_i <- rbind(test_result_0_1, test_result_0_2, test_result_1_2)
+
+
+} else if(all(Geno_types_found_i %in% c(0, 1, 2)) && length(Geno_types_found_i) > 2 && counts$Count[3] < 2){ 
+  
+  
+   
+
+#Define cells in groups for testing
+Geno_i_0 <- Geno_i %>% filter(Genotype == 0)
+Geno_i_1 <- Geno_i %>% filter(Genotype == 1)
+
+cells_i_0 <- rownames(Geno_i_0)
+cells_i_1 <- rownames(Geno_i_1)
+
+
+
+#Run differential testing 
+test_result_0_1 <- FindMarkers(object = cDNA_data_Seurat, assay = "RNA", slot = "data", ident.1 = cells_i_0, ident.2 = cells_i_1, test.use = "MAST", min.pct = 0, logfc.threshold = 0)
+
+
+#Add in information 
+
+counts_0 <- counts %>% filter(Genotype == 0) %>% pull(2)
+counts_1 <- counts %>% filter(Genotype == 1) %>% pull(2)
+
+#Add information to output
+
+test_result_0_1 <- test_result_0_1 %>% 
+                   mutate(Test = "0_1",
+                          ID_Geno = ID_Geno_i,
+                          Ncells_Cond1 = counts_0, 
+                          Ncells_Cond2 = counts_1, 
+                          Gene = rownames(test_result_0_1))
+
+#Define output
+
+test_result_i <- test_result_0_1
+  
+}else if (all(Geno_types_found_i %in% c(0, 1)) && length(Geno_types_found_i) > 1) {
+
+  
+
+#Define cells in groups for testing
+Geno_i_0 <- Geno_i %>% filter(Genotype == 0)
+Geno_i_1 <- Geno_i %>% filter(Genotype == 1)
+
+cells_i_0 <- rownames(Geno_i_0)
+cells_i_1 <- rownames(Geno_i_1)
+
+
+
+#Run differential testing 
+test_result_0_1 <- FindMarkers(object = cDNA_data_Seurat, assay = "RNA", slot = "data", ident.1 = cells_i_0, ident.2 = cells_i_1, test.use = "MAST", min.pct = 0, logfc.threshold = 0)
+
+
+#Add in information 
+
+counts_0 <- counts %>% filter(Genotype == 0) %>% pull(2)
+counts_1 <- counts %>% filter(Genotype == 1) %>% pull(2)
+
+#Add information to output
+
+test_result_0_1 <- test_result_0_1 %>% 
+                   mutate(Test = "0_1",
+                          ID_Geno = ID_Geno_i,
+                          Ncells_Cond1 = counts_0, 
+                          Ncells_Cond2 = counts_1, 
+                          Gene = rownames(test_result_0_1))
+
+
+
+#Define output
+
+test_result_i <- test_result_0_1
+
+
+}else{
+
+        # Handle the case when Geno_types_found_i doesn't meet the conditions
+      message("Genotype types do not meet conditions for row ", i)
+      # Optionally, you can add specific handling code here
+      next  # Skip to the next iteration 
+  
+  
+}
+
+#Add list to ouput
+DE_test_out[[i]] <- bind_rows(test_result_i)
+
+
+  
+  }, error = function(e) {
+    # This function is called if an error occurs
+    message(paste("Error in iteration", i, ":", e$message))
+    # Optionally, you can do other error handling here
+  })
+}
+
+
+
+# Combine all test results into a single dataframe
+DE_test_out <- bind_rows(DE_test_out)
+DE_test_out <- unique(DE_test_out)
+
+write.csv(DE_test_out, file = "SDR005_Stat_testing_MAST/SDR005_DE_test_out_GCB4_DZ.csv", quote = FALSE, row.names = FALSE, col.names = TRUE)
+
+
+test
+
+```
+
+
+
+
+
+#Combine each output DZ - LZ
+
+
+
+```{r}
+
+DE_test_out_FL7_LZ <- read.csv("SDR005_Stat_testing_MAST/SDR005_DE_test_out_FL7_LZ.csv") %>% mutate(Sample = "FL7", State = "LZ")
+DE_test_out_FL11_LZ <- read.csv("SDR005_Stat_testing_MAST/SDR005_DE_test_out_FL11_LZ.csv") %>% mutate(Sample = "FL11", State = "LZ")
+DE_test_out_GCB4_LZ <- read.csv("SDR005_Stat_testing_MAST/SDR005_DE_test_out_GCB4_LZ.csv") %>% mutate(Sample = "GCB4", State = "LZ")
+
+DE_test_out_FL7_DZ <- read.csv("SDR005_Stat_testing_MAST/SDR005_DE_test_out_FL7_DZ.csv") %>% mutate(Sample = "FL7", State = "DZ")
+DE_test_out_FL11_DZ <- read.csv("SDR005_Stat_testing_MAST/SDR005_DE_test_out_FL11_DZ.csv") %>% mutate(Sample = "FL11", State = "DZ")
+DE_test_out_GCB4_DZ <- read.csv("SDR005_Stat_testing_MAST/SDR005_DE_test_out_GCB4_DZ.csv") %>% mutate(Sample = "GCB4", State = "DZ")
+
+
+DE_test_LZ_DZ_comb <- rbind(DE_test_out_FL7_LZ, DE_test_out_FL11_LZ, DE_test_out_GCB4_LZ, DE_test_out_FL7_DZ, DE_test_out_FL11_DZ, DE_test_out_GCB4_DZ)
+
+
+#Add info
+
+#Add target name to DE output 
+
+to_add <- Geno_meta  %>% select(ID_Geno, Gene_annot)
+DE_test_LZ_DZ_comb <- DE_test_LZ_DZ_comb  %>% left_join(to_add, by = "ID_Geno")
+
+#Revert fold change
+DE_test_LZ_DZ_comb$avg_log2FC <- DE_test_LZ_DZ_comb$avg_log2FC*-1
+
+#Add column for significant
+
+#DE_test_out_sig <- DE_test_out %>% filter(Gene == Gene_annot)
+DE_test_LZ_DZ_comb  <- DE_test_LZ_DZ_comb  %>% mutate(Significant = if_else(p_val_adj <= 0.05, TRUE, FALSE))
+DE_test_LZ_DZ_comb  <- DE_test_LZ_DZ_comb  %>% mutate(target_to_plot = ifelse(Significant == TRUE, Gene_annot, NA))
+
+
+write.csv(DE_test_LZ_DZ_comb, file = "SDR005_Stat_testing_MAST/SDR005_DE_test_out_DZ_LZ_comb.csv", quote = FALSE, row.names = FALSE, col.names = TRUE)
+
+
+
+
+#Select significant ones
+DE_test_LZ_DZ_comb_sel <- DE_test_LZ_DZ_comb %>% filter(p_val_adj < 0.05,  
+                                                        pct.1 > 0.25 & pct.2 > 0.25)
+
+
+
+write.csv(DE_test_LZ_DZ_comb_sel, file = "SDR005_Stat_testing_MAST/SDR005_DE_test_out_DZ_LZ_comb_sig.csv", quote = FALSE, row.names = FALSE, col.names = TRUE)
+
+
+#Check how many downstream genes are impacted by variants
+
+
+sum <- DE_test_LZ_DZ_comb_sel %>% group_by(Sample, State, Gene) %>% summarise(count = n())
+
+write.csv(sum, file = "SDR005_Stat_testing_MAST/SDR005_DE_test_out_DZ_LZ_comb_sig_sum.csv", quote = FALSE, row.names = FALSE, col.names = TRUE)
+
+sum2 <- DE_test_LZ_DZ_comb_sel %>% group_by(Sample, Gene) %>% summarise(count = n())
+
+
+```
+
+
+
+
+
+
+
+
+
+
+
+
+#Testing MAST - test all variants
+
+
+#Set number of variants for filtering - make 
+
+```{r}
+
+
+
+
+cDNA_data_Seurat <- readRDS("SDR005_Combined_Geno_full.rds")
+metadata <- cDNA_data_Seurat@meta.data
+
+#Split Seurat by sample
+
+Idents(object = cDNA_data_Seurat) <- "sample"
+table(Idents(cDNA_data_Seurat))
+cDNA_data_Seurat_split <- SplitObject(cDNA_data_Seurat, split.by = "ident")
+
+
+#For FL7
+Geno_meta_FL7 <- cDNA_data_Seurat_split$FL7@assays$Geno_filtered@meta.data
+rownames(Geno_meta_FL7) <- Geno_meta_FL7$ID_Geno
+
+Geno_mat_FL7 <- cDNA_data_Seurat_split$FL7@assays$Geno_filtered$counts %>% as.data.frame()
+
+#Count cells per variant
+count_GT <- Geno_mat_FL7  %>%
+  apply(1, function(x) table(factor(x, levels = c("0", "1", "2")))) %>%
+  t() %>%
+  as.data.frame()
+
+colnames(count_GT) <- c("nREF", "nHET", "nALT")
+
+all.equal(rownames(Geno_meta_FL7), rownames(count_GT))
+Geno_meta_FL7 <- cbind(Geno_meta_FL7, count_GT)
+
+to_add_FL7 <- Geno_meta_FL7 %>% select(ID_Geno, nREF, nHET, nALT) %>% mutate(sample = "FL7")
+
+
+
+#For FL11
+Geno_meta_FL11 <- cDNA_data_Seurat_split$FL11@assays$Geno_filtered@meta.data
+rownames(Geno_meta_FL11) <- Geno_meta_FL11$ID_Geno
+
+Geno_mat_FL11 <- cDNA_data_Seurat_split$FL11@assays$Geno_filtered$counts %>% as.data.frame()
+
+#Count cells per variant
+count_GT <- Geno_mat_FL11  %>%
+  apply(1, function(x) table(factor(x, levels = c("0", "1", "2")))) %>%
+  t() %>%
+  as.data.frame()
+
+colnames(count_GT) <- c("nREF", "nHET", "nALT")
+
+all.equal(rownames(Geno_meta_FL11), rownames(count_GT))
+Geno_meta_FL11 <- cbind(Geno_meta_FL11, count_GT)
+
+to_add_FL11 <- Geno_meta_FL11 %>% select(ID_Geno, nREF, nHET, nALT) %>% mutate(sample = "FL11")
+
+
+#For GCB4
+Geno_meta_GCB4 <- cDNA_data_Seurat_split$GCB4@assays$Geno_filtered@meta.data
+rownames(Geno_meta_GCB4) <- Geno_meta_GCB4$ID_Geno
+
+Geno_mat_GCB4 <- cDNA_data_Seurat_split$GCB4@assays$Geno_filtered$counts %>% as.data.frame()
+
+#Count cells per variant
+count_GT <- Geno_mat_GCB4  %>%
+  apply(1, function(x) table(factor(x, levels = c("0", "1", "2")))) %>%
+  t() %>%
+  as.data.frame()
+
+colnames(count_GT) <- c("nREF", "nHET", "nALT")
+
+all.equal(rownames(Geno_meta_GCB4), rownames(count_GT))
+Geno_meta_GCB4 <- cbind(Geno_meta_GCB4, count_GT)
+
+to_add_GCB4 <- Geno_meta_GCB4 %>% select(ID_Geno, nREF, nHET, nALT) %>% mutate(sample = "GCB4")
+
+
+
+nVariants_comb <- rbind(to_add_FL7, to_add_FL11, to_add_GCB4)
+nVariants_comb  <- nVariants_comb  %>% mutate(nCells_edit = nHET+nALT)
+                                
+
+#Add cell nubmer
+nCells_sample <- table(Idents(cDNA_data_Seurat))%>% as.data.frame
+colnames(nCells_sample) <- c("sample", "nCells")
+
+nVariants_comb <- nVariants_comb %>% left_join(nCells_sample, by = "sample")
+
+#Add percentage
+nVariants_comb <- nVariants_comb %>% mutate(nCells_edit_perc = nCells_edit/nCells)
+
+#Define everything above 5 percent as detected
+
+cut_off = 30
+
+#nVariants_comb <- nVariants_comb %>% mutate(Detected = if_else(nCells_edit_perc > 0.05, TRUE, FALSE))
+nVariants_comb <- nVariants_comb %>% mutate(Detected = if_else(nCells_edit > cut_off, TRUE, FALSE))
+
+nVariants_comb_sel <- nVariants_comb %>% filter(Detected == TRUE)
+
+#Add Geno_meta info
+to_add <- Geno_meta  %>% select(ID_Geno, Gene_annot)
+nVariants_comb_sel  <- nVariants_comb_sel  %>% left_join(to_add, by = "ID_Geno")
+
+
+#Rename ID_Geno for filtering 
+nVariants_comb_sel <- nVariants_comb_sel %>% rename(ID_Geno = "Variant")
+
+nVariants_comb_sel_FL7 <- nVariants_comb_sel %>% filter(sample == "FL7")
+nVariants_comb_sel_FL11 <- nVariants_comb_sel %>% filter(sample == "FL11")
+nVariants_comb_sel_GCB4 <- nVariants_comb_sel %>% filter(sample == "GCB4")
+
+```
+
+
+
+
+
+
+#FL7
+
+```{r}
+
+
+#Split Seurat by sample
+
+Idents(object = cDNA_data_Seurat) <- "sample"
+table(Idents(cDNA_data_Seurat))
+cDNA_data_Seurat_split <- SplitObject(cDNA_data_Seurat, split.by = "ident")
+
+
+#Run for FL7 with Cell Types
+#For FL7
+
+#Split seurat by state
+Idents(object = cDNA_data_Seurat_split$FL7) <- "CellTypes"
+table(Idents(cDNA_data_Seurat_split$FL7))
+cDNA_data_Seurat_split_FL7 <- SplitObject(cDNA_data_Seurat_split$FL7, split.by = "ident")
+
+
+
+#LZ
+
+#Set cells for testing which state in 
+
+State="LZ"
+cells_State <- colnames(cDNA_data_Seurat_split_FL7[[State]])
+
+#Set filter 
+Geno_meta_filter <- nVariants_comb_sel_FL7
+
+
+#Set empty List
+DE_test_out <- list()
+
+
+for (i in 1:nrow(Geno_meta_filter)) {
+  tryCatch({
+row_i <- Geno_meta_filter[i, ]
+ID_Geno_i <- row_i$Variant
+Target_i <- row_i$Gene_annot
+
+
+#Get Genotype information 
+Geno_i <- data.frame(Genotype = Geno_mat[cells_State,ID_Geno_i])
+rownames(Geno_i) <- cells_State
+
+
+#Get variable for testing 
+Geno_types_found_i <- Geno_i %>%
+  filter(!is.na(Genotype)) %>%
+  distinct(Genotype) %>%
+  arrange(Genotype) %>%
+  pull(1)
+
+counts <- Geno_i %>%
+  group_by(Genotype) %>%
+  summarise(Count = n()) %>%
+  arrange(Genotype)
+
+
+
+#Run conditional loop depending on what Genotypes are found
+
+if(all(Geno_types_found_i %in% c(0, 1, 2)) && length(Geno_types_found_i) > 2 && counts$Count[3] > 1) {
+
+#Define cells in groups for testing
+
+Geno_i_0 <- Geno_i %>% filter(Genotype == 0)
+Geno_i_1 <- Geno_i %>% filter(Genotype == 1)
+Geno_i_2 <- Geno_i %>% filter(Genotype == 2)
+
+cells_i_0 <- rownames(Geno_i_0)
+cells_i_1 <- rownames(Geno_i_1)
+cells_i_2 <- rownames(Geno_i_2)
+
+
+#Run differential testing 
+
+test_result_0_1 <- FindMarkers(object = cDNA_data_Seurat, assay = "RNA", slot = "data", ident.1 = cells_i_0, ident.2 = cells_i_1, test.use = "MAST", min.pct = 0, logfc.threshold = 0)
+test_result_0_2 <- FindMarkers(object = cDNA_data_Seurat, assay = "RNA", slot = "data", ident.1 = cells_i_0, ident.2 = cells_i_2, test.use = "MAST", min.pct = 0, logfc.threshold = 0)
+test_result_1_2 <- FindMarkers(object = cDNA_data_Seurat, assay = "RNA", slot = "data", ident.1 = cells_i_1, ident.2 = cells_i_2, test.use = "MAST", min.pct = 0, logfc.threshold = 0)
+
+#Add in information 
+
+#Get count number
+
+counts_0 <- counts %>% filter(Genotype == 0) %>% pull(2)
+counts_1 <- counts %>% filter(Genotype == 1) %>% pull(2)
+counts_2 <- counts %>% filter(Genotype == 2) %>% pull(2)
+
+#Add information to output
+
+test_result_0_1 <- test_result_0_1 %>% 
+                   mutate(Test = "0_1",
+                          ID_Geno = ID_Geno_i,
+                          Ncells_Cond1 = counts_0, 
+                          Ncells_Cond2 = counts_1,
+                          Gene = rownames(test_result_0_1))
+
+
+test_result_0_2 <- test_result_0_2 %>% 
+                   mutate(Test = "0_2",
+                          ID_Geno = ID_Geno_i,
+                          Ncells_Cond1 = counts_0, 
+                          Ncells_Cond2 = counts_2,
+                          Gene = rownames(test_result_0_2))
+
+test_result_1_2 <- test_result_1_2 %>% 
+                   mutate(Test = "1_2",
+                          ID_Geno = ID_Geno_i,
+                          Ncells_Cond1 = counts_1, 
+                          Ncells_Cond2 = counts_2,
+                          Gene = rownames(test_result_1_2))
+
+
+#Combine 
+
+test_result_i <- rbind(test_result_0_1, test_result_0_2, test_result_1_2)
+
+
+} else if(all(Geno_types_found_i %in% c(0, 1, 2)) && length(Geno_types_found_i) > 2 && counts$Count[3] < 2){ 
+  
+  
+   
+
+#Define cells in groups for testing
+Geno_i_0 <- Geno_i %>% filter(Genotype == 0)
+Geno_i_1 <- Geno_i %>% filter(Genotype == 1)
+
+cells_i_0 <- rownames(Geno_i_0)
+cells_i_1 <- rownames(Geno_i_1)
+
+
+
+#Run differential testing 
+test_result_0_1 <- FindMarkers(object = cDNA_data_Seurat, assay = "RNA", slot = "data", ident.1 = cells_i_0, ident.2 = cells_i_1, test.use = "MAST", min.pct = 0, logfc.threshold = 0)
+
+
+#Add in information 
+
+counts_0 <- counts %>% filter(Genotype == 0) %>% pull(2)
+counts_1 <- counts %>% filter(Genotype == 1) %>% pull(2)
+
+#Add information to output
+
+test_result_0_1 <- test_result_0_1 %>% 
+                   mutate(Test = "0_1",
+                          ID_Geno = ID_Geno_i,
+                          Ncells_Cond1 = counts_0, 
+                          Ncells_Cond2 = counts_1, 
+                          Gene = rownames(test_result_0_1))
+
+#Define output
+
+test_result_i <- test_result_0_1
+  
+}else if (all(Geno_types_found_i %in% c(0, 1)) && length(Geno_types_found_i) > 1) {
+
+  
+
+#Define cells in groups for testing
+Geno_i_0 <- Geno_i %>% filter(Genotype == 0)
+Geno_i_1 <- Geno_i %>% filter(Genotype == 1)
+
+cells_i_0 <- rownames(Geno_i_0)
+cells_i_1 <- rownames(Geno_i_1)
+
+
+
+#Run differential testing 
+test_result_0_1 <- FindMarkers(object = cDNA_data_Seurat, assay = "RNA", slot = "data", ident.1 = cells_i_0, ident.2 = cells_i_1, test.use = "MAST", min.pct = 0, logfc.threshold = 0)
+
+
+#Add in information 
+
+counts_0 <- counts %>% filter(Genotype == 0) %>% pull(2)
+counts_1 <- counts %>% filter(Genotype == 1) %>% pull(2)
+
+#Add information to output
+
+test_result_0_1 <- test_result_0_1 %>% 
+                   mutate(Test = "0_1",
+                          ID_Geno = ID_Geno_i,
+                          Ncells_Cond1 = counts_0, 
+                          Ncells_Cond2 = counts_1, 
+                          Gene = rownames(test_result_0_1))
+
+
+
+#Define output
+
+test_result_i <- test_result_0_1
+
+
+}else{
+
+        # Handle the case when Geno_types_found_i doesn't meet the conditions
+      message("Genotype types do not meet conditions for row ", i)
+      # Optionally, you can add specific handling code here
+      next  # Skip to the next iteration 
+  
+  
+}
+
+#Add list to ouput
+DE_test_out[[i]] <- bind_rows(test_result_i)
+
+
+  
+  }, error = function(e) {
+    # This function is called if an error occurs
+    message(paste("Error in iteration", i, ":", e$message))
+    # Optionally, you can do other error handling here
+  })
+}
+
+
+
+# Combine all test results into a single dataframe
+DE_test_out <- bind_rows(DE_test_out)
+DE_test_out <- unique(DE_test_out)
+
+write.csv(DE_test_out, file = "SDR005_Stat_testing_MAST/SDR005_DE_test_out_all_variants_FL7_LZ.csv", quote = FALSE, row.names = FALSE, col.names = TRUE)
+
+
+
+
+#DZ
+
+
+#Set cells for testing which state in 
+
+State="DZ"
+cells_State <- colnames(cDNA_data_Seurat_split_FL7[[State]])
+
+#Set filter 
+Geno_meta_filter <- nVariants_comb_sel_FL7
+
+
+#Set empty List
+DE_test_out <- list()
+
+
+for (i in 1:nrow(Geno_meta_filter)) {
+  tryCatch({
+row_i <- Geno_meta_filter[i, ]
+ID_Geno_i <- row_i$Variant
+Target_i <- row_i$Gene_annot
+
+
+#Get Genotype information 
+Geno_i <- data.frame(Genotype = Geno_mat[cells_State,ID_Geno_i])
+rownames(Geno_i) <- cells_State
+
+
+#Get variable for testing 
+Geno_types_found_i <- Geno_i %>%
+  filter(!is.na(Genotype)) %>%
+  distinct(Genotype) %>%
+  arrange(Genotype) %>%
+  pull(1)
+
+counts <- Geno_i %>%
+  group_by(Genotype) %>%
+  summarise(Count = n()) %>%
+  arrange(Genotype)
+
+
+
+#Run conditional loop depending on what Genotypes are found
+
+if(all(Geno_types_found_i %in% c(0, 1, 2)) && length(Geno_types_found_i) > 2 && counts$Count[3] > 1) {
+
+#Define cells in groups for testing
+
+Geno_i_0 <- Geno_i %>% filter(Genotype == 0)
+Geno_i_1 <- Geno_i %>% filter(Genotype == 1)
+Geno_i_2 <- Geno_i %>% filter(Genotype == 2)
+
+cells_i_0 <- rownames(Geno_i_0)
+cells_i_1 <- rownames(Geno_i_1)
+cells_i_2 <- rownames(Geno_i_2)
+
+
+#Run differential testing 
+
+test_result_0_1 <- FindMarkers(object = cDNA_data_Seurat, assay = "RNA", slot = "data", ident.1 = cells_i_0, ident.2 = cells_i_1, test.use = "MAST", min.pct = 0, logfc.threshold = 0)
+test_result_0_2 <- FindMarkers(object = cDNA_data_Seurat, assay = "RNA", slot = "data", ident.1 = cells_i_0, ident.2 = cells_i_2, test.use = "MAST", min.pct = 0, logfc.threshold = 0)
+test_result_1_2 <- FindMarkers(object = cDNA_data_Seurat, assay = "RNA", slot = "data", ident.1 = cells_i_1, ident.2 = cells_i_2, test.use = "MAST", min.pct = 0, logfc.threshold = 0)
+
+#Add in information 
+
+#Get count number
+
+counts_0 <- counts %>% filter(Genotype == 0) %>% pull(2)
+counts_1 <- counts %>% filter(Genotype == 1) %>% pull(2)
+counts_2 <- counts %>% filter(Genotype == 2) %>% pull(2)
+
+#Add information to output
+
+test_result_0_1 <- test_result_0_1 %>% 
+                   mutate(Test = "0_1",
+                          ID_Geno = ID_Geno_i,
+                          Ncells_Cond1 = counts_0, 
+                          Ncells_Cond2 = counts_1,
+                          Gene = rownames(test_result_0_1))
+
+
+test_result_0_2 <- test_result_0_2 %>% 
+                   mutate(Test = "0_2",
+                          ID_Geno = ID_Geno_i,
+                          Ncells_Cond1 = counts_0, 
+                          Ncells_Cond2 = counts_2,
+                          Gene = rownames(test_result_0_2))
+
+test_result_1_2 <- test_result_1_2 %>% 
+                   mutate(Test = "1_2",
+                          ID_Geno = ID_Geno_i,
+                          Ncells_Cond1 = counts_1, 
+                          Ncells_Cond2 = counts_2,
+                          Gene = rownames(test_result_1_2))
+
+
+#Combine 
+
+test_result_i <- rbind(test_result_0_1, test_result_0_2, test_result_1_2)
+
+
+} else if(all(Geno_types_found_i %in% c(0, 1, 2)) && length(Geno_types_found_i) > 2 && counts$Count[3] < 2){ 
+  
+  
+   
+
+#Define cells in groups for testing
+Geno_i_0 <- Geno_i %>% filter(Genotype == 0)
+Geno_i_1 <- Geno_i %>% filter(Genotype == 1)
+
+cells_i_0 <- rownames(Geno_i_0)
+cells_i_1 <- rownames(Geno_i_1)
+
+
+
+#Run differential testing 
+test_result_0_1 <- FindMarkers(object = cDNA_data_Seurat, assay = "RNA", slot = "data", ident.1 = cells_i_0, ident.2 = cells_i_1, test.use = "MAST", min.pct = 0, logfc.threshold = 0)
+
+
+#Add in information 
+
+counts_0 <- counts %>% filter(Genotype == 0) %>% pull(2)
+counts_1 <- counts %>% filter(Genotype == 1) %>% pull(2)
+
+#Add information to output
+
+test_result_0_1 <- test_result_0_1 %>% 
+                   mutate(Test = "0_1",
+                          ID_Geno = ID_Geno_i,
+                          Ncells_Cond1 = counts_0, 
+                          Ncells_Cond2 = counts_1, 
+                          Gene = rownames(test_result_0_1))
+
+#Define output
+
+test_result_i <- test_result_0_1
+  
+}else if (all(Geno_types_found_i %in% c(0, 1)) && length(Geno_types_found_i) > 1) {
+
+  
+
+#Define cells in groups for testing
+Geno_i_0 <- Geno_i %>% filter(Genotype == 0)
+Geno_i_1 <- Geno_i %>% filter(Genotype == 1)
+
+cells_i_0 <- rownames(Geno_i_0)
+cells_i_1 <- rownames(Geno_i_1)
+
+
+
+#Run differential testing 
+test_result_0_1 <- FindMarkers(object = cDNA_data_Seurat, assay = "RNA", slot = "data", ident.1 = cells_i_0, ident.2 = cells_i_1, test.use = "MAST", min.pct = 0, logfc.threshold = 0)
+
+
+#Add in information 
+
+counts_0 <- counts %>% filter(Genotype == 0) %>% pull(2)
+counts_1 <- counts %>% filter(Genotype == 1) %>% pull(2)
+
+#Add information to output
+
+test_result_0_1 <- test_result_0_1 %>% 
+                   mutate(Test = "0_1",
+                          ID_Geno = ID_Geno_i,
+                          Ncells_Cond1 = counts_0, 
+                          Ncells_Cond2 = counts_1, 
+                          Gene = rownames(test_result_0_1))
+
+
+
+#Define output
+
+test_result_i <- test_result_0_1
+
+
+}else{
+
+        # Handle the case when Geno_types_found_i doesn't meet the conditions
+      message("Genotype types do not meet conditions for row ", i)
+      # Optionally, you can add specific handling code here
+      next  # Skip to the next iteration 
+  
+  
+}
+
+#Add list to ouput
+DE_test_out[[i]] <- bind_rows(test_result_i)
+
+
+  
+  }, error = function(e) {
+    # This function is called if an error occurs
+    message(paste("Error in iteration", i, ":", e$message))
+    # Optionally, you can do other error handling here
+  })
+}
+
+
+
+# Combine all test results into a single dataframe
+DE_test_out <- bind_rows(DE_test_out)
+DE_test_out <- unique(DE_test_out)
+
+write.csv(DE_test_out, file = "SDR005_Stat_testing_MAST/SDR005_DE_test_out_all_variants_FL7_DZ.csv", quote = FALSE, row.names = FALSE, col.names = TRUE)
+
+
+
+
+```
+
+
+
+#FL11
+
+```{r}
+
+
+#Split Seurat by sample
+
+Idents(object = cDNA_data_Seurat) <- "sample"
+table(Idents(cDNA_data_Seurat))
+cDNA_data_Seurat_split <- SplitObject(cDNA_data_Seurat, split.by = "ident")
+
+
+#Run for FL11 with Cell Types
+#For FL11
+
+#Split seurat by state
+Idents(object = cDNA_data_Seurat_split$FL11) <- "CellTypes"
+table(Idents(cDNA_data_Seurat_split$FL11))
+cDNA_data_Seurat_split_FL11 <- SplitObject(cDNA_data_Seurat_split$FL11, split.by = "ident")
+
+
+
+#LZ
+
+#Set cells for testing which state in 
+
+State="LZ"
+cells_State <- colnames(cDNA_data_Seurat_split_FL11[[State]])
+
+#Set filter 
+Geno_meta_filter <- nVariants_comb_sel_FL11
+
+
+#Set empty List
+DE_test_out <- list()
+
+
+for (i in 1:nrow(Geno_meta_filter)) {
+  tryCatch({
+row_i <- Geno_meta_filter[i, ]
+ID_Geno_i <- row_i$Variant
+Target_i <- row_i$Gene_annot
+
+
+#Get Genotype information 
+Geno_i <- data.frame(Genotype = Geno_mat[cells_State,ID_Geno_i])
+rownames(Geno_i) <- cells_State
+
+
+#Get variable for testing 
+Geno_types_found_i <- Geno_i %>%
+  filter(!is.na(Genotype)) %>%
+  distinct(Genotype) %>%
+  arrange(Genotype) %>%
+  pull(1)
+
+counts <- Geno_i %>%
+  group_by(Genotype) %>%
+  summarise(Count = n()) %>%
+  arrange(Genotype)
+
+
+
+#Run conditional loop depending on what Genotypes are found
+
+if(all(Geno_types_found_i %in% c(0, 1, 2)) && length(Geno_types_found_i) > 2 && counts$Count[3] > 1) {
+
+#Define cells in groups for testing
+
+Geno_i_0 <- Geno_i %>% filter(Genotype == 0)
+Geno_i_1 <- Geno_i %>% filter(Genotype == 1)
+Geno_i_2 <- Geno_i %>% filter(Genotype == 2)
+
+cells_i_0 <- rownames(Geno_i_0)
+cells_i_1 <- rownames(Geno_i_1)
+cells_i_2 <- rownames(Geno_i_2)
+
+
+#Run differential testing 
+
+test_result_0_1 <- FindMarkers(object = cDNA_data_Seurat, assay = "RNA", slot = "data", ident.1 = cells_i_0, ident.2 = cells_i_1, test.use = "MAST", min.pct = 0, logfc.threshold = 0)
+test_result_0_2 <- FindMarkers(object = cDNA_data_Seurat, assay = "RNA", slot = "data", ident.1 = cells_i_0, ident.2 = cells_i_2, test.use = "MAST", min.pct = 0, logfc.threshold = 0)
+test_result_1_2 <- FindMarkers(object = cDNA_data_Seurat, assay = "RNA", slot = "data", ident.1 = cells_i_1, ident.2 = cells_i_2, test.use = "MAST", min.pct = 0, logfc.threshold = 0)
+
+#Add in information 
+
+#Get count number
+
+counts_0 <- counts %>% filter(Genotype == 0) %>% pull(2)
+counts_1 <- counts %>% filter(Genotype == 1) %>% pull(2)
+counts_2 <- counts %>% filter(Genotype == 2) %>% pull(2)
+
+#Add information to output
+
+test_result_0_1 <- test_result_0_1 %>% 
+                   mutate(Test = "0_1",
+                          ID_Geno = ID_Geno_i,
+                          Ncells_Cond1 = counts_0, 
+                          Ncells_Cond2 = counts_1,
+                          Gene = rownames(test_result_0_1))
+
+
+test_result_0_2 <- test_result_0_2 %>% 
+                   mutate(Test = "0_2",
+                          ID_Geno = ID_Geno_i,
+                          Ncells_Cond1 = counts_0, 
+                          Ncells_Cond2 = counts_2,
+                          Gene = rownames(test_result_0_2))
+
+test_result_1_2 <- test_result_1_2 %>% 
+                   mutate(Test = "1_2",
+                          ID_Geno = ID_Geno_i,
+                          Ncells_Cond1 = counts_1, 
+                          Ncells_Cond2 = counts_2,
+                          Gene = rownames(test_result_1_2))
+
+
+#Combine 
+
+test_result_i <- rbind(test_result_0_1, test_result_0_2, test_result_1_2)
+
+
+} else if(all(Geno_types_found_i %in% c(0, 1, 2)) && length(Geno_types_found_i) > 2 && counts$Count[3] < 2){ 
+  
+  
+   
+
+#Define cells in groups for testing
+Geno_i_0 <- Geno_i %>% filter(Genotype == 0)
+Geno_i_1 <- Geno_i %>% filter(Genotype == 1)
+
+cells_i_0 <- rownames(Geno_i_0)
+cells_i_1 <- rownames(Geno_i_1)
+
+
+
+#Run differential testing 
+test_result_0_1 <- FindMarkers(object = cDNA_data_Seurat, assay = "RNA", slot = "data", ident.1 = cells_i_0, ident.2 = cells_i_1, test.use = "MAST", min.pct = 0, logfc.threshold = 0)
+
+
+#Add in information 
+
+counts_0 <- counts %>% filter(Genotype == 0) %>% pull(2)
+counts_1 <- counts %>% filter(Genotype == 1) %>% pull(2)
+
+#Add information to output
+
+test_result_0_1 <- test_result_0_1 %>% 
+                   mutate(Test = "0_1",
+                          ID_Geno = ID_Geno_i,
+                          Ncells_Cond1 = counts_0, 
+                          Ncells_Cond2 = counts_1, 
+                          Gene = rownames(test_result_0_1))
+
+#Define output
+
+test_result_i <- test_result_0_1
+  
+}else if (all(Geno_types_found_i %in% c(0, 1)) && length(Geno_types_found_i) > 1) {
+
+  
+
+#Define cells in groups for testing
+Geno_i_0 <- Geno_i %>% filter(Genotype == 0)
+Geno_i_1 <- Geno_i %>% filter(Genotype == 1)
+
+cells_i_0 <- rownames(Geno_i_0)
+cells_i_1 <- rownames(Geno_i_1)
+
+
+
+#Run differential testing 
+test_result_0_1 <- FindMarkers(object = cDNA_data_Seurat, assay = "RNA", slot = "data", ident.1 = cells_i_0, ident.2 = cells_i_1, test.use = "MAST", min.pct = 0, logfc.threshold = 0)
+
+
+#Add in information 
+
+counts_0 <- counts %>% filter(Genotype == 0) %>% pull(2)
+counts_1 <- counts %>% filter(Genotype == 1) %>% pull(2)
+
+#Add information to output
+
+test_result_0_1 <- test_result_0_1 %>% 
+                   mutate(Test = "0_1",
+                          ID_Geno = ID_Geno_i,
+                          Ncells_Cond1 = counts_0, 
+                          Ncells_Cond2 = counts_1, 
+                          Gene = rownames(test_result_0_1))
+
+
+
+#Define output
+
+test_result_i <- test_result_0_1
+
+
+}else{
+
+        # Handle the case when Geno_types_found_i doesn't meet the conditions
+      message("Genotype types do not meet conditions for row ", i)
+      # Optionally, you can add specific handling code here
+      next  # Skip to the next iteration 
+  
+  
+}
+
+#Add list to ouput
+DE_test_out[[i]] <- bind_rows(test_result_i)
+
+
+  
+  }, error = function(e) {
+    # This function is called if an error occurs
+    message(paste("Error in iteration", i, ":", e$message))
+    # Optionally, you can do other error handling here
+  })
+}
+
+
+
+# Combine all test results into a single dataframe
+DE_test_out <- bind_rows(DE_test_out)
+DE_test_out <- unique(DE_test_out)
+
+write.csv(DE_test_out, file = "SDR005_Stat_testing_MAST/SDR005_DE_test_out_all_variants_FL11_LZ.csv", quote = FALSE, row.names = FALSE, col.names = TRUE)
+
+
+
+
+#DZ
+
+
+#Set cells for testing which state in 
+
+State="DZ"
+cells_State <- colnames(cDNA_data_Seurat_split_FL11[[State]])
+
+#Set filter 
+Geno_meta_filter <- nVariants_comb_sel_FL11
+
+
+#Set empty List
+DE_test_out <- list()
+
+
+for (i in 1:nrow(Geno_meta_filter)) {
+  tryCatch({
+row_i <- Geno_meta_filter[i, ]
+ID_Geno_i <- row_i$Variant
+Target_i <- row_i$Gene_annot
+
+
+#Get Genotype information 
+Geno_i <- data.frame(Genotype = Geno_mat[cells_State,ID_Geno_i])
+rownames(Geno_i) <- cells_State
+
+
+#Get variable for testing 
+Geno_types_found_i <- Geno_i %>%
+  filter(!is.na(Genotype)) %>%
+  distinct(Genotype) %>%
+  arrange(Genotype) %>%
+  pull(1)
+
+counts <- Geno_i %>%
+  group_by(Genotype) %>%
+  summarise(Count = n()) %>%
+  arrange(Genotype)
+
+
+
+#Run conditional loop depending on what Genotypes are found
+
+if(all(Geno_types_found_i %in% c(0, 1, 2)) && length(Geno_types_found_i) > 2 && counts$Count[3] > 1) {
+
+#Define cells in groups for testing
+
+Geno_i_0 <- Geno_i %>% filter(Genotype == 0)
+Geno_i_1 <- Geno_i %>% filter(Genotype == 1)
+Geno_i_2 <- Geno_i %>% filter(Genotype == 2)
+
+cells_i_0 <- rownames(Geno_i_0)
+cells_i_1 <- rownames(Geno_i_1)
+cells_i_2 <- rownames(Geno_i_2)
+
+
+#Run differential testing 
+
+test_result_0_1 <- FindMarkers(object = cDNA_data_Seurat, assay = "RNA", slot = "data", ident.1 = cells_i_0, ident.2 = cells_i_1, test.use = "MAST", min.pct = 0, logfc.threshold = 0)
+test_result_0_2 <- FindMarkers(object = cDNA_data_Seurat, assay = "RNA", slot = "data", ident.1 = cells_i_0, ident.2 = cells_i_2, test.use = "MAST", min.pct = 0, logfc.threshold = 0)
+test_result_1_2 <- FindMarkers(object = cDNA_data_Seurat, assay = "RNA", slot = "data", ident.1 = cells_i_1, ident.2 = cells_i_2, test.use = "MAST", min.pct = 0, logfc.threshold = 0)
+
+#Add in information 
+
+#Get count number
+
+counts_0 <- counts %>% filter(Genotype == 0) %>% pull(2)
+counts_1 <- counts %>% filter(Genotype == 1) %>% pull(2)
+counts_2 <- counts %>% filter(Genotype == 2) %>% pull(2)
+
+#Add information to output
+
+test_result_0_1 <- test_result_0_1 %>% 
+                   mutate(Test = "0_1",
+                          ID_Geno = ID_Geno_i,
+                          Ncells_Cond1 = counts_0, 
+                          Ncells_Cond2 = counts_1,
+                          Gene = rownames(test_result_0_1))
+
+
+test_result_0_2 <- test_result_0_2 %>% 
+                   mutate(Test = "0_2",
+                          ID_Geno = ID_Geno_i,
+                          Ncells_Cond1 = counts_0, 
+                          Ncells_Cond2 = counts_2,
+                          Gene = rownames(test_result_0_2))
+
+test_result_1_2 <- test_result_1_2 %>% 
+                   mutate(Test = "1_2",
+                          ID_Geno = ID_Geno_i,
+                          Ncells_Cond1 = counts_1, 
+                          Ncells_Cond2 = counts_2,
+                          Gene = rownames(test_result_1_2))
+
+
+#Combine 
+
+test_result_i <- rbind(test_result_0_1, test_result_0_2, test_result_1_2)
+
+
+} else if(all(Geno_types_found_i %in% c(0, 1, 2)) && length(Geno_types_found_i) > 2 && counts$Count[3] < 2){ 
+  
+  
+   
+
+#Define cells in groups for testing
+Geno_i_0 <- Geno_i %>% filter(Genotype == 0)
+Geno_i_1 <- Geno_i %>% filter(Genotype == 1)
+
+cells_i_0 <- rownames(Geno_i_0)
+cells_i_1 <- rownames(Geno_i_1)
+
+
+
+#Run differential testing 
+test_result_0_1 <- FindMarkers(object = cDNA_data_Seurat, assay = "RNA", slot = "data", ident.1 = cells_i_0, ident.2 = cells_i_1, test.use = "MAST", min.pct = 0, logfc.threshold = 0)
+
+
+#Add in information 
+
+counts_0 <- counts %>% filter(Genotype == 0) %>% pull(2)
+counts_1 <- counts %>% filter(Genotype == 1) %>% pull(2)
+
+#Add information to output
+
+test_result_0_1 <- test_result_0_1 %>% 
+                   mutate(Test = "0_1",
+                          ID_Geno = ID_Geno_i,
+                          Ncells_Cond1 = counts_0, 
+                          Ncells_Cond2 = counts_1, 
+                          Gene = rownames(test_result_0_1))
+
+#Define output
+
+test_result_i <- test_result_0_1
+  
+}else if (all(Geno_types_found_i %in% c(0, 1)) && length(Geno_types_found_i) > 1) {
+
+  
+
+#Define cells in groups for testing
+Geno_i_0 <- Geno_i %>% filter(Genotype == 0)
+Geno_i_1 <- Geno_i %>% filter(Genotype == 1)
+
+cells_i_0 <- rownames(Geno_i_0)
+cells_i_1 <- rownames(Geno_i_1)
+
+
+
+#Run differential testing 
+test_result_0_1 <- FindMarkers(object = cDNA_data_Seurat, assay = "RNA", slot = "data", ident.1 = cells_i_0, ident.2 = cells_i_1, test.use = "MAST", min.pct = 0, logfc.threshold = 0)
+
+
+#Add in information 
+
+counts_0 <- counts %>% filter(Genotype == 0) %>% pull(2)
+counts_1 <- counts %>% filter(Genotype == 1) %>% pull(2)
+
+#Add information to output
+
+test_result_0_1 <- test_result_0_1 %>% 
+                   mutate(Test = "0_1",
+                          ID_Geno = ID_Geno_i,
+                          Ncells_Cond1 = counts_0, 
+                          Ncells_Cond2 = counts_1, 
+                          Gene = rownames(test_result_0_1))
+
+
+
+#Define output
+
+test_result_i <- test_result_0_1
+
+
+}else{
+
+        # Handle the case when Geno_types_found_i doesn't meet the conditions
+      message("Genotype types do not meet conditions for row ", i)
+      # Optionally, you can add specific handling code here
+      next  # Skip to the next iteration 
+  
+  
+}
+
+#Add list to ouput
+DE_test_out[[i]] <- bind_rows(test_result_i)
+
+
+  
+  }, error = function(e) {
+    # This function is called if an error occurs
+    message(paste("Error in iteration", i, ":", e$message))
+    # Optionally, you can do other error handling here
+  })
+}
+
+
+
+# Combine all test results into a single dataframe
+DE_test_out <- bind_rows(DE_test_out)
+DE_test_out <- unique(DE_test_out)
+
+write.csv(DE_test_out, file = "SDR005_Stat_testing_MAST/SDR005_DE_test_out_all_variants_FL11_DZ.csv", quote = FALSE, row.names = FALSE, col.names = TRUE)
+
+
+
+
+```
+
+
+#GCB4
+
+```{r}
+
+
+#Split Seurat by sample
+
+Idents(object = cDNA_data_Seurat) <- "sample"
+table(Idents(cDNA_data_Seurat))
+cDNA_data_Seurat_split <- SplitObject(cDNA_data_Seurat, split.by = "ident")
+
+
+#Run for GCB4 with Cell Types
+#For GCB4
+
+#Split seurat by state
+Idents(object = cDNA_data_Seurat_split$GCB4) <- "CellTypes"
+table(Idents(cDNA_data_Seurat_split$GCB4))
+cDNA_data_Seurat_split_GCB4 <- SplitObject(cDNA_data_Seurat_split$GCB4, split.by = "ident")
+
+
+
+#LZ
+
+#Set cells for testing which state in 
+
+State="LZ"
+cells_State <- colnames(cDNA_data_Seurat_split_GCB4[[State]])
+
+#Set filter 
+Geno_meta_filter <- nVariants_comb_sel_GCB4
+
+
+#Set empty List
+DE_test_out <- list()
+
+
+for (i in 1:nrow(Geno_meta_filter)) {
+  tryCatch({
+row_i <- Geno_meta_filter[i, ]
+ID_Geno_i <- row_i$Variant
+Target_i <- row_i$Gene_annot
+
+
+#Get Genotype information 
+Geno_i <- data.frame(Genotype = Geno_mat[cells_State,ID_Geno_i])
+rownames(Geno_i) <- cells_State
+
+
+#Get variable for testing 
+Geno_types_found_i <- Geno_i %>%
+  filter(!is.na(Genotype)) %>%
+  distinct(Genotype) %>%
+  arrange(Genotype) %>%
+  pull(1)
+
+counts <- Geno_i %>%
+  group_by(Genotype) %>%
+  summarise(Count = n()) %>%
+  arrange(Genotype)
+
+
+
+#Run conditional loop depending on what Genotypes are found
+
+if(all(Geno_types_found_i %in% c(0, 1, 2)) && length(Geno_types_found_i) > 2 && counts$Count[3] > 1) {
+
+#Define cells in groups for testing
+
+Geno_i_0 <- Geno_i %>% filter(Genotype == 0)
+Geno_i_1 <- Geno_i %>% filter(Genotype == 1)
+Geno_i_2 <- Geno_i %>% filter(Genotype == 2)
+
+cells_i_0 <- rownames(Geno_i_0)
+cells_i_1 <- rownames(Geno_i_1)
+cells_i_2 <- rownames(Geno_i_2)
+
+
+#Run differential testing 
+
+test_result_0_1 <- FindMarkers(object = cDNA_data_Seurat, assay = "RNA", slot = "data", ident.1 = cells_i_0, ident.2 = cells_i_1, test.use = "MAST", min.pct = 0, logfc.threshold = 0)
+test_result_0_2 <- FindMarkers(object = cDNA_data_Seurat, assay = "RNA", slot = "data", ident.1 = cells_i_0, ident.2 = cells_i_2, test.use = "MAST", min.pct = 0, logfc.threshold = 0)
+test_result_1_2 <- FindMarkers(object = cDNA_data_Seurat, assay = "RNA", slot = "data", ident.1 = cells_i_1, ident.2 = cells_i_2, test.use = "MAST", min.pct = 0, logfc.threshold = 0)
+
+#Add in information 
+
+#Get count number
+
+counts_0 <- counts %>% filter(Genotype == 0) %>% pull(2)
+counts_1 <- counts %>% filter(Genotype == 1) %>% pull(2)
+counts_2 <- counts %>% filter(Genotype == 2) %>% pull(2)
+
+#Add information to output
+
+test_result_0_1 <- test_result_0_1 %>% 
+                   mutate(Test = "0_1",
+                          ID_Geno = ID_Geno_i,
+                          Ncells_Cond1 = counts_0, 
+                          Ncells_Cond2 = counts_1,
+                          Gene = rownames(test_result_0_1))
+
+
+test_result_0_2 <- test_result_0_2 %>% 
+                   mutate(Test = "0_2",
+                          ID_Geno = ID_Geno_i,
+                          Ncells_Cond1 = counts_0, 
+                          Ncells_Cond2 = counts_2,
+                          Gene = rownames(test_result_0_2))
+
+test_result_1_2 <- test_result_1_2 %>% 
+                   mutate(Test = "1_2",
+                          ID_Geno = ID_Geno_i,
+                          Ncells_Cond1 = counts_1, 
+                          Ncells_Cond2 = counts_2,
+                          Gene = rownames(test_result_1_2))
+
+
+#Combine 
+
+test_result_i <- rbind(test_result_0_1, test_result_0_2, test_result_1_2)
+
+
+} else if(all(Geno_types_found_i %in% c(0, 1, 2)) && length(Geno_types_found_i) > 2 && counts$Count[3] < 2){ 
+  
+  
+   
+
+#Define cells in groups for testing
+Geno_i_0 <- Geno_i %>% filter(Genotype == 0)
+Geno_i_1 <- Geno_i %>% filter(Genotype == 1)
+
+cells_i_0 <- rownames(Geno_i_0)
+cells_i_1 <- rownames(Geno_i_1)
+
+
+
+#Run differential testing 
+test_result_0_1 <- FindMarkers(object = cDNA_data_Seurat, assay = "RNA", slot = "data", ident.1 = cells_i_0, ident.2 = cells_i_1, test.use = "MAST", min.pct = 0, logfc.threshold = 0)
+
+
+#Add in information 
+
+counts_0 <- counts %>% filter(Genotype == 0) %>% pull(2)
+counts_1 <- counts %>% filter(Genotype == 1) %>% pull(2)
+
+#Add information to output
+
+test_result_0_1 <- test_result_0_1 %>% 
+                   mutate(Test = "0_1",
+                          ID_Geno = ID_Geno_i,
+                          Ncells_Cond1 = counts_0, 
+                          Ncells_Cond2 = counts_1, 
+                          Gene = rownames(test_result_0_1))
+
+#Define output
+
+test_result_i <- test_result_0_1
+  
+}else if (all(Geno_types_found_i %in% c(0, 1)) && length(Geno_types_found_i) > 1) {
+
+  
+
+#Define cells in groups for testing
+Geno_i_0 <- Geno_i %>% filter(Genotype == 0)
+Geno_i_1 <- Geno_i %>% filter(Genotype == 1)
+
+cells_i_0 <- rownames(Geno_i_0)
+cells_i_1 <- rownames(Geno_i_1)
+
+
+
+#Run differential testing 
+test_result_0_1 <- FindMarkers(object = cDNA_data_Seurat, assay = "RNA", slot = "data", ident.1 = cells_i_0, ident.2 = cells_i_1, test.use = "MAST", min.pct = 0, logfc.threshold = 0)
+
+
+#Add in information 
+
+counts_0 <- counts %>% filter(Genotype == 0) %>% pull(2)
+counts_1 <- counts %>% filter(Genotype == 1) %>% pull(2)
+
+#Add information to output
+
+test_result_0_1 <- test_result_0_1 %>% 
+                   mutate(Test = "0_1",
+                          ID_Geno = ID_Geno_i,
+                          Ncells_Cond1 = counts_0, 
+                          Ncells_Cond2 = counts_1, 
+                          Gene = rownames(test_result_0_1))
+
+
+
+#Define output
+
+test_result_i <- test_result_0_1
+
+
+}else{
+
+        # Handle the case when Geno_types_found_i doesn't meet the conditions
+      message("Genotype types do not meet conditions for row ", i)
+      # Optionally, you can add specific handling code here
+      next  # Skip to the next iteration 
+  
+  
+}
+
+#Add list to ouput
+DE_test_out[[i]] <- bind_rows(test_result_i)
+
+
+  
+  }, error = function(e) {
+    # This function is called if an error occurs
+    message(paste("Error in iteration", i, ":", e$message))
+    # Optionally, you can do other error handling here
+  })
+}
+
+
+
+# Combine all test results into a single dataframe
+DE_test_out <- bind_rows(DE_test_out)
+DE_test_out <- unique(DE_test_out)
+
+write.csv(DE_test_out, file = "SDR005_Stat_testing_MAST/SDR005_DE_test_out_all_variants_GCB4_LZ.csv", quote = FALSE, row.names = FALSE, col.names = TRUE)
+
+
+
+
+#DZ
+
+
+#Set cells for testing which state in 
+
+State="DZ"
+cells_State <- colnames(cDNA_data_Seurat_split_GCB4[[State]])
+
+#Set filter 
+Geno_meta_filter <- nVariants_comb_sel_GCB4
+
+
+#Set empty List
+DE_test_out <- list()
+
+
+for (i in 1:nrow(Geno_meta_filter)) {
+  tryCatch({
+row_i <- Geno_meta_filter[i, ]
+ID_Geno_i <- row_i$Variant
+Target_i <- row_i$Gene_annot
+
+
+#Get Genotype information 
+Geno_i <- data.frame(Genotype = Geno_mat[cells_State,ID_Geno_i])
+rownames(Geno_i) <- cells_State
+
+
+#Get variable for testing 
+Geno_types_found_i <- Geno_i %>%
+  filter(!is.na(Genotype)) %>%
+  distinct(Genotype) %>%
+  arrange(Genotype) %>%
+  pull(1)
+
+counts <- Geno_i %>%
+  group_by(Genotype) %>%
+  summarise(Count = n()) %>%
+  arrange(Genotype)
+
+
+
+#Run conditional loop depending on what Genotypes are found
+
+if(all(Geno_types_found_i %in% c(0, 1, 2)) && length(Geno_types_found_i) > 2 && counts$Count[3] > 1) {
+
+#Define cells in groups for testing
+
+Geno_i_0 <- Geno_i %>% filter(Genotype == 0)
+Geno_i_1 <- Geno_i %>% filter(Genotype == 1)
+Geno_i_2 <- Geno_i %>% filter(Genotype == 2)
+
+cells_i_0 <- rownames(Geno_i_0)
+cells_i_1 <- rownames(Geno_i_1)
+cells_i_2 <- rownames(Geno_i_2)
+
+
+#Run differential testing 
+
+test_result_0_1 <- FindMarkers(object = cDNA_data_Seurat, assay = "RNA", slot = "data", ident.1 = cells_i_0, ident.2 = cells_i_1, test.use = "MAST", min.pct = 0, logfc.threshold = 0)
+test_result_0_2 <- FindMarkers(object = cDNA_data_Seurat, assay = "RNA", slot = "data", ident.1 = cells_i_0, ident.2 = cells_i_2, test.use = "MAST", min.pct = 0, logfc.threshold = 0)
+test_result_1_2 <- FindMarkers(object = cDNA_data_Seurat, assay = "RNA", slot = "data", ident.1 = cells_i_1, ident.2 = cells_i_2, test.use = "MAST", min.pct = 0, logfc.threshold = 0)
+
+#Add in information 
+
+#Get count number
+
+counts_0 <- counts %>% filter(Genotype == 0) %>% pull(2)
+counts_1 <- counts %>% filter(Genotype == 1) %>% pull(2)
+counts_2 <- counts %>% filter(Genotype == 2) %>% pull(2)
+
+#Add information to output
+
+test_result_0_1 <- test_result_0_1 %>% 
+                   mutate(Test = "0_1",
+                          ID_Geno = ID_Geno_i,
+                          Ncells_Cond1 = counts_0, 
+                          Ncells_Cond2 = counts_1,
+                          Gene = rownames(test_result_0_1))
+
+
+test_result_0_2 <- test_result_0_2 %>% 
+                   mutate(Test = "0_2",
+                          ID_Geno = ID_Geno_i,
+                          Ncells_Cond1 = counts_0, 
+                          Ncells_Cond2 = counts_2,
+                          Gene = rownames(test_result_0_2))
+
+test_result_1_2 <- test_result_1_2 %>% 
+                   mutate(Test = "1_2",
+                          ID_Geno = ID_Geno_i,
+                          Ncells_Cond1 = counts_1, 
+                          Ncells_Cond2 = counts_2,
+                          Gene = rownames(test_result_1_2))
+
+
+#Combine 
+
+test_result_i <- rbind(test_result_0_1, test_result_0_2, test_result_1_2)
+
+
+} else if(all(Geno_types_found_i %in% c(0, 1, 2)) && length(Geno_types_found_i) > 2 && counts$Count[3] < 2){ 
+  
+  
+   
+
+#Define cells in groups for testing
+Geno_i_0 <- Geno_i %>% filter(Genotype == 0)
+Geno_i_1 <- Geno_i %>% filter(Genotype == 1)
+
+cells_i_0 <- rownames(Geno_i_0)
+cells_i_1 <- rownames(Geno_i_1)
+
+
+
+#Run differential testing 
+test_result_0_1 <- FindMarkers(object = cDNA_data_Seurat, assay = "RNA", slot = "data", ident.1 = cells_i_0, ident.2 = cells_i_1, test.use = "MAST", min.pct = 0, logfc.threshold = 0)
+
+
+#Add in information 
+
+counts_0 <- counts %>% filter(Genotype == 0) %>% pull(2)
+counts_1 <- counts %>% filter(Genotype == 1) %>% pull(2)
+
+#Add information to output
+
+test_result_0_1 <- test_result_0_1 %>% 
+                   mutate(Test = "0_1",
+                          ID_Geno = ID_Geno_i,
+                          Ncells_Cond1 = counts_0, 
+                          Ncells_Cond2 = counts_1, 
+                          Gene = rownames(test_result_0_1))
+
+#Define output
+
+test_result_i <- test_result_0_1
+  
+}else if (all(Geno_types_found_i %in% c(0, 1)) && length(Geno_types_found_i) > 1) {
+
+  
+
+#Define cells in groups for testing
+Geno_i_0 <- Geno_i %>% filter(Genotype == 0)
+Geno_i_1 <- Geno_i %>% filter(Genotype == 1)
+
+cells_i_0 <- rownames(Geno_i_0)
+cells_i_1 <- rownames(Geno_i_1)
+
+
+
+#Run differential testing 
+test_result_0_1 <- FindMarkers(object = cDNA_data_Seurat, assay = "RNA", slot = "data", ident.1 = cells_i_0, ident.2 = cells_i_1, test.use = "MAST", min.pct = 0, logfc.threshold = 0)
+
+
+#Add in information 
+
+counts_0 <- counts %>% filter(Genotype == 0) %>% pull(2)
+counts_1 <- counts %>% filter(Genotype == 1) %>% pull(2)
+
+#Add information to output
+
+test_result_0_1 <- test_result_0_1 %>% 
+                   mutate(Test = "0_1",
+                          ID_Geno = ID_Geno_i,
+                          Ncells_Cond1 = counts_0, 
+                          Ncells_Cond2 = counts_1, 
+                          Gene = rownames(test_result_0_1))
+
+
+
+#Define output
+
+test_result_i <- test_result_0_1
+
+
+}else{
+
+        # Handle the case when Geno_types_found_i doesn't meet the conditions
+      message("Genotype types do not meet conditions for row ", i)
+      # Optionally, you can add specific handling code here
+      next  # Skip to the next iteration 
+  
+  
+}
+
+#Add list to ouput
+DE_test_out[[i]] <- bind_rows(test_result_i)
+
+
+  
+  }, error = function(e) {
+    # This function is called if an error occurs
+    message(paste("Error in iteration", i, ":", e$message))
+    # Optionally, you can do other error handling here
+  })
+}
+
+
+
+# Combine all test results into a single dataframe
+DE_test_out <- bind_rows(DE_test_out)
+DE_test_out <- unique(DE_test_out)
+
+write.csv(DE_test_out, file = "SDR005_Stat_testing_MAST/SDR005_DE_test_out_all_variants_GCB4_DZ.csv", quote = FALSE, row.names = FALSE, col.names = TRUE)
+
+
+test
+
+```
+
+
+
+
+
+
+#Combine each output DZ - LZ - all variants
+
+
+
+```{r}
+
+DE_test_out_FL7_LZ <- read.csv("SDR005_Stat_testing_MAST/SDR005_DE_test_out_all_variants_FL7_LZ.csv") %>% mutate(Sample = "FL7", State = "LZ")
+DE_test_out_FL11_LZ <- read.csv("SDR005_Stat_testing_MAST/SDR005_DE_test_out_all_variants_FL11_LZ.csv") %>% mutate(Sample = "FL11", State = "LZ")
+DE_test_out_GCB4_LZ <- read.csv("SDR005_Stat_testing_MAST/SDR005_DE_test_out_all_variants_GCB4_LZ.csv") %>% mutate(Sample = "GCB4", State = "LZ")
+
+DE_test_out_FL7_DZ <- read.csv("SDR005_Stat_testing_MAST/SDR005_DE_test_out_all_variants_FL7_DZ.csv") %>% mutate(Sample = "FL7", State = "DZ")
+DE_test_out_FL11_DZ <- read.csv("SDR005_Stat_testing_MAST/SDR005_DE_test_out_all_variants_FL11_DZ.csv") %>% mutate(Sample = "FL11", State = "DZ")
+DE_test_out_GCB4_DZ <- read.csv("SDR005_Stat_testing_MAST/SDR005_DE_test_out_all_variants_GCB4_DZ.csv") %>% mutate(Sample = "GCB4", State = "DZ")
+
+
+DE_test_LZ_DZ_comb <- rbind(DE_test_out_FL7_LZ, DE_test_out_FL11_LZ, DE_test_out_GCB4_LZ, DE_test_out_FL7_DZ, DE_test_out_FL11_DZ, DE_test_out_GCB4_DZ)
+
+
+#Add info
+
+#Add target name to DE output 
+
+to_add <- Geno_meta  %>% select(ID_Geno, Gene_annot)
+DE_test_LZ_DZ_comb <- DE_test_LZ_DZ_comb  %>% left_join(to_add, by = "ID_Geno")
+
+#Revert fold change
+DE_test_LZ_DZ_comb$avg_log2FC <- DE_test_LZ_DZ_comb$avg_log2FC*-1
+
+#Add column for significant
+
+#DE_test_out_sig <- DE_test_out %>% filter(Gene == Gene_annot)
+DE_test_LZ_DZ_comb  <- DE_test_LZ_DZ_comb  %>% mutate(Significant = if_else(p_val_adj <= 0.05, TRUE, FALSE))
+DE_test_LZ_DZ_comb  <- DE_test_LZ_DZ_comb  %>% mutate(target_to_plot = ifelse(Significant == TRUE, Gene_annot, NA))
+
+
+write.csv(DE_test_LZ_DZ_comb, file = "SDR005_Stat_testing_MAST/SDR005_DE_test_out_all_variants_DZ_LZ_comb.csv", quote = FALSE, row.names = FALSE, col.names = TRUE)
+
+
+
+
+#Select significant ones
+DE_test_LZ_DZ_comb_sel <- DE_test_LZ_DZ_comb %>% filter(p_val_adj < 0.05,  
+                                                        pct.1 > 0.25 & pct.2 > 0.25)
+
+
+
+write.csv(DE_test_LZ_DZ_comb_sel, file = "SDR005_Stat_testing_MAST/SDR005_DE_test_out_all_variants_DZ_LZ_comb_sig.csv", quote = FALSE, row.names = FALSE, col.names = TRUE)
+
+
+#Check how many downstream genes are impacted by variants
+
+
+sum <- DE_test_LZ_DZ_comb_sel %>% group_by(Sample, State, Gene) %>% summarise(count = n())
+
+write.csv(sum, file = "SDR005_Stat_testing_MAST/SDR005_DE_test_out_DZ_LZ_comb_sig_sum.csv", quote = FALSE, row.names = FALSE, col.names = TRUE)
+
+sum2 <- DE_test_LZ_DZ_comb_sel %>% group_by(Sample, Gene) %>% summarise(count = n())
+
+
+```
+

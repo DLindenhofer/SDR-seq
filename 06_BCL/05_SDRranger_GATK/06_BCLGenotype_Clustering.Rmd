@@ -1,0 +1,461 @@
+---
+title: "20241026_Cardelino_Out_Plot"
+output: html_document
+date: "2024-10-26"
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+## Load libraries
+
+```{r}
+library(here)
+library(Seurat)
+library(dplyr)
+library(tidyr)
+library(stringr)
+library(ggplot2)
+library(pheatmap)
+library(RColorBrewer)
+library(Matrix)
+library(data.table)
+library(readr)
+library(GenomicRanges)
+library(RColorBrewer)
+library(data.table)
+library(circlize)
+library(future.apply)
+library(cardelino)
+
+library(patchwork)
+
+plot_save_dir <- "/Users/dominik.lindenhofer/Documents/Data_Local/Shared_Donnacha_SDR005!/SDR005_data_share/20240205_SDR005_SDRranger_gDNA-V4_cDNA-V5/SDR005_Cardelino_Out"
+
+
+file_save_dir <- "/Users/dominik.lindenhofer/ownCloud/Shared_project_folder/Paper_drafts/2022_SDR_Paper/Source_data/Individual_files_all"
+
+```
+
+
+#Check data
+
+```{r}
+
+
+cDNA_data_Seurat <- readRDS("SDR005_Combined_Geno_full_clustered_Gclustered.rds")
+DefaultAssay(cDNA_data_Seurat) < "RNA"
+
+
+
+
+
+
+```
+
+
+#Subset on DZ and LZ variants in each sample and cluster again 
+
+Run UMAP again on Genotype data
+Subset for DZ and LZ 
+
+
+```{r}
+
+group_colors_samples <- c("FL1" = "#FC6736", FL2 = "#FFB0B0", GCB1 = "#0C2D57")
+group_colors_CellTypes <- c("Naïve" = "#00CED1", "LZ" = "#D24545", "DZ" = "#51829B" ,"Mem IgM" = "#F6995C", 
+                  "Mem IgG" = "#EFBC9B", "Plasma" = "#948979", "Other" = "#D6DAC8", "B unassigned" = "#9CAFAA")
+
+
+library(pcaMethods)
+
+table(cDNA_data_Seurat@meta.data$CellTypes)
+
+DefaultAssay(cDNA_data_Seurat) <- "VAF_filtered_M"
+
+cDNA_data_Seurat_DZ_LZ <- subset(x = cDNA_data_Seurat, 
+                                 subset = (CellTypes == "DZ" |
+                                           CellTypes == "LZ" ))
+
+Idents(object = cDNA_data_Seurat_DZ_LZ) <- "Tumor_ID"
+table(Idents(cDNA_data_Seurat_DZ_LZ))
+cDNA_data_Seurat_DZ_LZ_split <- SplitObject(cDNA_data_Seurat_DZ_LZ, split.by = "Tumor_ID")
+
+DefaultAssay(cDNA_data_Seurat_DZ_LZ_split$FL7) <- "VAF_filtered_M"
+DefaultAssay(cDNA_data_Seurat_DZ_LZ_split$FL11) <- "VAF_filtered_M"
+DefaultAssay(cDNA_data_Seurat_DZ_LZ_split$GCB4) <- "VAF_filtered_M"
+
+
+# Loop through each Tumor_ID subset and perform PCA, UMAP, and clustering
+for (i in names(cDNA_data_Seurat_DZ_LZ_split)) {
+  
+  assay_name = "VAF_filtered_M"
+  pca_name <- paste0("pca.VAF_filtered_M_", i)
+  pca_key <-  paste0("PCVAFfilteredM", i, "_")
+  
+  umap_name <- paste0("umap.VAF_filtered_M_", i)
+  umap_key <-  paste0("UMAPVAFfilteredM", i, "_")
+  
+
+  #Subset for GT matrix
+  GT_mat_sub_i <- cDNA_data_Seurat_DZ_LZ_split[[i]]@assays[[assay_name]]$counts
+  
+  # Run PCA using probabilistic PCA (ppca) which handles missing values
+  ppca_res <- pca(t(GT_mat_sub_i), method = "ppca", center = FALSE, nPcs = 10)  # 50 as also done in Seurat pipeline
+  summary(ppca_res)
+
+  pca_embedding <- scores(ppca_res)
+
+  # Extract the standard deviations of the PCs
+  pc_sd <- ppca_res@sDev
+
+  # Calculate the proportion of variance explained by each PC
+  pc_var_explained <- (pc_sd^2) / sum(pc_sd^2)
+
+
+  # Create a data frame for plotting
+  pc_var_df <- data.frame(PC = 1:length(pc_var_explained), 
+                        Variance_Explained = pc_var_explained)
+  
+  # Plot the variance explained by each PC
+  ggplot(pc_var_df, aes(x = PC, y = Variance_Explained)) +
+  geom_bar(stat = "identity", fill = "steelblue") +
+  geom_line(color = "red", size = 1) +
+  geom_point(color = "red", size = 2) +
+  theme_minimal() +
+  labs(title = "Scree Plot: Variance Explained by PCs",
+       x = "Principal Component",
+       y = "Proportion of Variance Explained")
+
+ cDNA_data_Seurat_DZ_LZ_split[[i]][[pca_name]] <- CreateDimReducObject(embeddings = pca_embedding, 
+                                                  key = pca_key, 
+                                                  assay = assay_name)
+ 
+  
+  # Find clusters
+  cDNA_data_Seurat_DZ_LZ_split[[i]] <- FindNeighbors(cDNA_data_Seurat_DZ_LZ_split[[i]], dims = 1:10, reduction = pca_name)
+  cDNA_data_Seurat_DZ_LZ_split[[i]] <- FindClusters(cDNA_data_Seurat_DZ_LZ_split[[i]], resolution = 0.1, reduction = pca_name)
+  
+  
+  # Run UMAP
+  cDNA_data_Seurat_DZ_LZ_split[[i]] <- RunUMAP(cDNA_data_Seurat_DZ_LZ_split[[i]], 
+                                               dims = 1:10, 
+                                               reduction = pca_name,
+                                               reduction.name = umap_name,
+                                               reduction.key = umap_key)
+  
+
+}
+
+
+
+#Find clusters again 
+
+
+for (i in names(cDNA_data_Seurat_DZ_LZ_split)) {
+  
+  assay_name = "VAF_filtered_M"
+  pca_name <- paste0("pca.VAF_filtered_M_", i)
+  pca_key <-  paste0("PCVAFfilteredM", i, "_")
+  
+  umap_name <- paste0("umap.VAF_filtered_M_", i)
+  umap_key <-  paste0("UMAPVAFfilteredM", i, "_")
+  
+  
+  cDNA_data_Seurat_DZ_LZ_split[[i]] <- FindClusters(cDNA_data_Seurat_DZ_LZ_split[[i]], resolution = 0.1, reduction = pca_name)
+  
+
+}
+
+
+
+#Plot dimplots
+
+for (i in names(cDNA_data_Seurat_DZ_LZ_split)) {
+  
+  res = "0.1"
+  assay_name = "VAF_filtered_M"
+  pca_name <- paste0("pca.VAF_filtered_M_", i)
+  pca_key <-  paste0("PCVAFfilteredM", i, "_")
+  
+  umap_name <- paste0("umap.VAF_filtered_M_", i)
+  umap_key <-  paste0("UMAPVAFfilteredM", i, "_")
+  
+  # Plot Dimplots
+  title = paste0("Tumor_ID_", res, "_", assay_name, "_", i ,".pdf")
+  
+  p1 <- DimPlot(cDNA_data_Seurat_DZ_LZ_split[[i]], group.by = "CellTypes", reduction = umap_name, shuffle = TRUE, cols = group_colors_CellTypes ) + ggtitle(title)
+  
+  p2 <- DimPlot(cDNA_data_Seurat_DZ_LZ_split[[i]],  reduction = umap_name) + ggtitle(title)
+  
+  p3 <- DimPlot(cDNA_data_Seurat_DZ_LZ_split[[i]], group.by = "clone", reduction = umap_name, shuffle = TRUE) + ggtitle(title)
+
+  p <- p1 +  p2 + p3 + plot_layout(ncol = 3)
+
+  ggsave(filename = title, path = plot_save_dir, plot = p, device = "pdf", scale = 1,
+       width = 45, height = 15, units = "cm", dpi = 300)
+  p
+
+
+}
+
+
+
+#Save again
+
+saveRDS(cDNA_data_Seurat_DZ_LZ_split, "SDR005_Combined_Geno_full_clustered_Gclustered_DZ_LZ_sub_split.rds")
+
+
+
+
+```
+
+
+#Reorder cluster numbers accordingly 
+
+```{r}
+
+
+cDNA_data_Seurat_DZ_LZ_split <- readRDS("SDR005_Combined_Geno_full_clustered_Gclustered_DZ_LZ_sub_split.rds")
+
+unique(cDNA_data_Seurat_DZ_LZ_split$FL7$VAF_filtered_M_snn_res.0.1)
+unique(cDNA_data_Seurat_DZ_LZ_split$FL11$VAF_filtered_M_snn_res.0.1)
+unique(cDNA_data_Seurat_DZ_LZ_split$GCB4$VAF_filtered_M_snn_res.0.1)
+
+new.cluster.ids_FL7 <- c("0" =  "Clone1", 
+                         "1" =  "Clone2")
+
+new.cluster.ids_FL11 <- c("0" =  "Clone2", 
+                          "1" =  "Clone1",
+                          "2" =  "Clone4",
+                          "3" =  "Clone3")
+
+new.cluster.ids_GCB4 <- c("0" = "Clone2",
+                          "1" = "Clone4", 
+                          "2" = "Clone1", 
+                          "3" = "Clone3")
+
+
+Geno_res <- "VAF_filtered_M_snn_res.0.1"
+
+#Set identities
+
+Idents(cDNA_data_Seurat_DZ_LZ_split$FL7) <- cDNA_data_Seurat_DZ_LZ_split$FL7$VAF_filtered_M_snn_res.0.1
+cDNA_data_Seurat_DZ_LZ_split$FL7 <- RenameIdents(cDNA_data_Seurat_DZ_LZ_split$FL7, new.cluster.ids_FL7 )
+cDNA_data_Seurat_DZ_LZ_split$FL7$Clone_VAF_M_0.1 <- Idents(cDNA_data_Seurat_DZ_LZ_split$FL7)
+
+
+Idents(cDNA_data_Seurat_DZ_LZ_split$FL11) <- cDNA_data_Seurat_DZ_LZ_split$FL11$VAF_filtered_M_snn_res.0.1
+cDNA_data_Seurat_DZ_LZ_split$FL11 <- RenameIdents(cDNA_data_Seurat_DZ_LZ_split$FL11, new.cluster.ids_FL11 )
+cDNA_data_Seurat_DZ_LZ_split$FL11$Clone_VAF_M_0.1 <- Idents(cDNA_data_Seurat_DZ_LZ_split$FL11)
+
+
+Idents(cDNA_data_Seurat_DZ_LZ_split$GCB4) <- cDNA_data_Seurat_DZ_LZ_split$GCB4$VAF_filtered_M_snn_res.0.1
+cDNA_data_Seurat_DZ_LZ_split$GCB4 <- RenameIdents(cDNA_data_Seurat_DZ_LZ_split$GCB4, new.cluster.ids_GCB4 )
+cDNA_data_Seurat_DZ_LZ_split$GCB4$Clone_VAF_M_0.1 <- Idents(cDNA_data_Seurat_DZ_LZ_split$GCB4)
+
+
+
+#Plot dimplots wo legend and fix color 
+
+group_colors_samples <- c("FL1" = "#FC6736", FL2 = "#FFB0B0", GCB1 = "#0C2D57")
+group_colors_CellTypes <- c("Naïve" = "#00CED1", "LZ" = "#D24545", "DZ" = "#51829B" ,"Mem IgM" = "#F6995C", 
+                  "Mem IgG" = "#EFBC9B", "Plasma" = "#948979", "Other" = "#D6DAC8", "B unassigned" = "#9CAFAA")
+group_colors_light_chain <- c("Kappa" = "#006400", "Lambda" = "#FFD700")
+
+group_colors_FL7 <- c(
+  "Clone1" = "#FC6736",    # Original color
+  "Clone2" = "#FFA07A",    # Light salmon
+  "Clone3" = "#FF4500",    # Bright orange-red
+  "Clone4" = "#C1440E"     # Darker, earthy red-orange
+)
+
+group_colors_FL11 <- c(
+  "Clone1" = "#FFB0B0",    # Original color
+  "Clone2" = "#D96A6A",    # Muted rose pink for a less intense contrast
+  "Clone3" = "#FF4C4C",    # Very light, soft pink
+  "Clone4" = "#E75495"     # Deep rosy pink for a strong contrast
+)
+
+group_colors_GCB4 <- c(
+  "Clone1" = "#0C2D57",    # Original deep navy blue
+  "Clone2" = "#1F77B4",    # Medium blue with a touch of brightness
+  "Clone3" = "#87CEEB",    # Light sky blue for a softer contrast
+  "Clone4" = "#0047AB"     # Rich cobalt blue for depth
+)
+
+
+i = "FL7"
+plot_save_dir <- "/Users/dominik.lindenhofer/Documents/Data_Local/Shared_Donnacha_SDR005!/SDR005_data_share/20240205_SDR005_SDRranger_gDNA-V4_cDNA-V5/SDR005_Cardelino_Out/For_figure"
+
+for (i in names(cDNA_data_Seurat_DZ_LZ_split)) {
+  
+  res = "0.1"
+  assay_name = "VAF_filtered_M"
+  pca_name <- paste0("pca.VAF_filtered_M_", i)
+  pca_key <-  paste0("PCVAFfilteredM", i, "_")
+  
+  umap_name <- paste0("umap.VAF_filtered_M_", i)
+  umap_key <-  paste0("UMAPVAFfilteredM", i, "_")
+  
+  group_color_i <- get(paste0("group_colors_", i))
+  
+  # Plot Dimplots
+  title = paste0("Tumor_ID_", res, "_", assay_name, "_", i ,"with_legend.pdf")
+  
+  p1 <- DimPlot(cDNA_data_Seurat_DZ_LZ_split[[i]], group.by = "CellTypes", reduction = umap_name, shuffle = TRUE, cols = group_colors_CellTypes ) + ggtitle(title)
+  
+  p2 <- DimPlot(cDNA_data_Seurat_DZ_LZ_split[[i]],  reduction = umap_name, cols = group_color_i) + ggtitle(title)
+  
+    p3 <- DimPlot(cDNA_data_Seurat_DZ_LZ_split[[i]], group.by = "Light_chain", reduction = umap_name, shuffle = TRUE, cols = group_colors_light_chain  ) + ggtitle(title)
+
+  p <- p1 +  p2 + p3 + plot_layout(ncol = 3)
+
+  ggsave(filename = title, path = plot_save_dir, plot = p, device = "pdf", scale = 1,
+       width = 45, height = 15, units = "cm", dpi = 300)
+  p
+
+
+}
+
+
+
+for (i in names(cDNA_data_Seurat_DZ_LZ_split)) {
+  
+  res = "0.1"
+  assay_name = "VAF_filtered_M"
+  pca_name <- paste0("pca.VAF_filtered_M_", i)
+  pca_key <-  paste0("PCVAFfilteredM", i, "_")
+  
+  umap_name <- paste0("umap.VAF_filtered_M_", i)
+  umap_key <-  paste0("UMAPVAFfilteredM", i, "_")
+  
+  group_color_i <- get(paste0("group_colors_", i))
+  
+  # Plot Dimplots
+  title = paste0("Tumor_ID_", res, "_", assay_name, "_", i ,"no_legend.pdf")
+  
+  p1 <- DimPlot(cDNA_data_Seurat_DZ_LZ_split[[i]], group.by = "CellTypes", reduction = umap_name, shuffle = TRUE, cols = group_colors_CellTypes ) + ggtitle(title) + NoLegend()
+  
+  p2 <- DimPlot(cDNA_data_Seurat_DZ_LZ_split[[i]],  reduction = umap_name, cols = group_color_i) + ggtitle(title) + NoLegend()
+  
+      p3 <- DimPlot(cDNA_data_Seurat_DZ_LZ_split[[i]], group.by = "Light_chain", reduction = umap_name, shuffle = TRUE, cols = group_colors_light_chain  ) + ggtitle(title) + NoLegend()
+
+  p <- p1 +  p2 + p3 + plot_layout(ncol = 3)
+
+  ggsave(filename = title, path = plot_save_dir, plot = p, device = "pdf", scale = 1,
+       width = 45, height = 15, units = "cm", dpi = 300)
+  p
+
+
+}
+
+#For source data
+
+
+
+to_file_list <- list()
+
+i = "FL7"
+
+for (i in names(cDNA_data_Seurat_DZ_LZ_split)) {
+  
+    res = "0.1"
+  assay_name = "VAF_filtered_M"
+  pca_name <- paste0("pca.VAF_filtered_M_", i)
+  pca_key <-  paste0("PCVAFfilteredM", i, "_")
+  
+  umap_name <- paste0("umap.VAF_filtered_M_", i)
+  umap_key <-  paste0("UMAPVAFfilteredM", i, "_")
+  
+  #group_color_i <- get(paste0("group_colors_", i))
+  
+  umap_coords_i <- Embeddings(cDNA_data_Seurat_DZ_LZ_split[[i]], reduction =  umap_name) %>% as.data.frame()
+  colnames( umap_coords_i) <- c("UMAP_1", "UMAP_2")
+  metadata_RNA_i <- cDNA_data_Seurat_DZ_LZ_split[[i]]@meta.data
+  metadata_i <- cDNA_data_Seurat_DZ_LZ_split[[i]]@assays[[assay_name]]@meta.data
+  sample_i <- unique(metadata_RNA_i$sample)
+  
+  umap_coords_i <- umap_coords_i %>% mutate(cell= rownames(umap_coords_i), 
+                                            sample = sample_i)
+
+  to_add_i <- metadata_RNA_i %>% dplyr::select(cell_merge, CellTypes, Clone = Clone_VAF_M_0.1 )
+  umap_coords_i <- umap_coords_i %>%  left_join(to_add_i, by = c("cell" = "cell_merge"))
+  to_file_list[[i]] <- umap_coords_i
+}
+
+
+to_file <- bind_rows(to_file_list)
+
+file_name = "Fig4_M_e_Clones.csv"
+write.csv(to_file, paste0(file_save_dir, "/", file_name), row.names = FALSE) 
+
+
+```
+
+
+
+
+#Check on abundances in split sample - DZ -LZ
+
+```{r}
+
+
+group_colors_samples <- c("FL1" = "#FC6736", FL2 = "#FFB0B0", GCB1 = "#0C2D57")
+group_colors_CellTypes <- c("Naïve" = "#00CED1", "LZ" = "#D24545", "DZ" = "#51829B" ,"Mem IgM" = "#F6995C", 
+                  "Mem IgG" = "#EFBC9B", "Plasma" = "#948979", "Other" = "#D6DAC8", "B unassigned" = "#9CAFAA")
+
+
+i = "GCB4"
+
+for (i in names(cDNA_data_Seurat_DZ_LZ_split)) {
+  
+
+metadata_i <- cDNA_data_Seurat_DZ_LZ_split[[i]]@meta.data
+
+#Geno_res <- "VAF_filtered_M_snn_res.0.1"
+Geno_res <- "Clone_VAF_M_0.1"
+
+# Process the data
+to_plot <- metadata_i %>% 
+  group_by(sample, !!sym(Geno_res), CellTypes) %>%
+  summarise(count = n(), .groups = 'drop') %>%
+  group_by(sample, !!sym(Geno_res)) %>%
+  mutate(fraction = count / sum(count),
+         sum = sum(count),
+         ID = str_c(sample, !!sym(Geno_res), sep = "_")) %>%
+  filter(sum > 20)
+
+to_order <- to_plot %>% filter(CellTypes == "LZ") %>% arrange(desc(fraction))
+to_order <- to_order$ID
+
+to_plot$ID <- factor(to_plot$ID, levels = to_order)
+
+
+title = paste0(i, Geno_res, "DZ_LZ_perc_stacked.pdf")
+p <- to_plot %>%
+  ggplot(aes(x = ID, y = fraction, fill = CellTypes)) + 
+  geom_bar(stat = "identity", position = "stack") +
+  theme_classic() +
+  theme(axis.text.x = element_text(angle = 45, vjust = 1, hjust = 1),
+        plot.title = element_text(hjust = 0.5, face = "bold")) +
+  ggtitle(title) +
+  labs(x = "Type", y = "Proportion of Cells") +
+  scale_fill_manual(values = group_colors_CellTypes) +
+  guides(fill = "none") +
+  scale_y_continuous(limits = c(0, 1)) 
+ #facet_wrap(~sample)
+
+ggsave(filename = title, path = plot_save_dir, plot = p, device = "pdf", scale = 1,
+       width = 8, height = 15, units = "cm", dpi = 300)
+p
+
+}
+
+```
+
+
+
+
+

@@ -28,7 +28,7 @@ library(here)
 
 plot_save_dir <- "Plots_GATK"
 
-
+file_save_dir <- "/Users/dominik.lindenhofer/ownCloud/Shared_project_folder/Paper_drafts/2022_SDR_Paper/Source_data/Individual_files_all"
 ```
 
 ## Read in data
@@ -43,7 +43,7 @@ cDNA_data_Seurat <- readRDS("Plots/SDR006_Seurat_filtered_clustered.rds")
 #Load in variants file from GATK and VEP
 #Adjust skip according to vcf file - skip header
 
-all_var_full <- read_tsv("06_GATK_VEP/BE.vcf", skip = 170, col_names = TRUE)
+all_var_full <- read_tsv("/Users/dominik.lindenhofer/Documents/Data_Local/20240326_SDR006_SDRranger/Plots/06_GATK_VEP/SDR006.vcf", skip = 170, col_names = TRUE)
 
 #Fill in empty information properly 
 all_var_full <- all_var_full  %>% mutate(ID = ".", QUAL = ".", FILTER = ".", FORMAT = "GT:AD:DP:GQ:PL")
@@ -97,7 +97,7 @@ Geno_meta <- Geno_meta %>% mutate(ID_Geno = str_c(SYMBOL, `#CHROM`, POS, REF, AL
 
 #Annotate AMP_ID to each varint
 
-annot <- read.csv("05_BE_genomic_annotation_file.csv")
+annot <- read.csv("REF_lists/SDR006_genomic_annotation_file.csv")
 
 
 Geno_meta_gr <- Geno_meta %>% select(Chromosome = `#CHROM`, Start = POS, END = POS, ID = ID_Geno)
@@ -347,7 +347,7 @@ list2env(Geno_list, envir = .GlobalEnv)
 
 #Set cutoffs 
 
-cut_off_RD = 5
+cut_off_RD = 10
 cut_off_GQ = 30
 
 #Make RD cutoff - make data frame dataframe to produce NAs 
@@ -396,7 +396,259 @@ saveRDS(cDNA_data_Seurat, "SDR006_Geno_full.rds")
 
 cDNA_data_Seurat <- readRDS("SDR006_Geno_full.rds")
 
+
+
+
 ```
+
+
+
+
+
+#Update Geno_meta table to include metrics needed later
+
+```{r}
+#Load function needed
+source("R_Functions_SDR_seq/RepeatAnnot_V2.R")
+
+#Load data
+
+cDNA_data_Seurat <- readRDS("SDR006_Geno_full.rds")
+repeats <- read.delim("/Users/dominik.lindenhofer/Documents/Data_Local/Repeats/rmsk.txt", header = FALSE)
+gDNA_primers_df <- read.csv("REF_lists/SDR006_gDNA_primers.csv") %>% distinct()
+
+#Get matrices needed
+
+gDNA_mat <-cDNA_data_Seurat@assays$gDNA$counts %>% as.data.frame()
+VAF <- cDNA_data_Seurat@assays$Geno_filtered@misc$VAF
+GT_mat <- cDNA_data_Seurat@assays$Geno_filtered$counts %>% as.data.frame()
+
+#Get Geno metadata
+Geno_meta <- cDNA_data_Seurat@assays$Geno_filtered@meta.data
+
+
+#_________________________________________________
+
+#Load annotaion file and add
+annot <- read.csv("05_BE_genomic_annotation_file.csv") %>%
+  dplyr::select(Chromosome = seqnames, Start = start, End = end, width, Amp_ID = ID, target_name, Start_Amp, End_Amp, cDNA_Ov )
+
+Geno_meta <- Geno_meta %>% left_join(annot, by = c("Amp_ID"))
+
+#_________________________________________________
+#Count Genoytpes and add
+
+
+nCells <- length(colnames(GT_mat))
+
+
+# Convert the data frame to a matrix for faster operations
+GT_mat_matrix <- as.matrix(GT_mat)
+
+# Count 
+NA_count <- rowSums(is.na(GT_mat_matrix))
+REF_count <- rowSums(GT_mat_matrix == 0, na.rm = TRUE)
+HET_count <- rowSums(GT_mat_matrix == 1, na.rm = TRUE)
+ALT_count <- rowSums(GT_mat_matrix == 2, na.rm = TRUE)
+
+# Combine into a new data frame
+counts <- data.frame(NA_count, REF_count, HET_count, ALT_count)
+
+rm(NA_count, REF_count, HET_count, ALT_count)
+
+rownames(counts) <- rownames(GT_mat)
+counts_frac <- counts/nCells
+counts_frac$ID_Geno <- rownames(counts_frac)
+
+#Join
+Geno_meta <- Geno_meta %>% left_join(counts_frac, by = "ID_Geno")
+
+#Add ratio REF/ALT
+
+Geno_meta <- Geno_meta %>% mutate(REF_ALT_ratio = REF_count/ALT_count)
+
+
+#_________________________________________________
+#Also add in the gDNA primers length
+
+gDNA_primers_df <- gDNA_primers_df %>% mutate(ID_prim = str_c(gDNA_primers_df$ID, gDNA_primers_df$Dir, sep = "-"))
+
+CS_overhang <- "GTACTCGCAGTAGTC"
+R2N_overhang <- "GTCTCGTGGGCTCGGAGATGTGTATAAGAGACAG"
+
+#Remove overhang sequences
+gDNA_primers_df <- gDNA_primers_df %>% mutate(Sequence = gsub(CS_overhang, "", Sequence))
+gDNA_primers_df <- gDNA_primers_df %>% mutate(Sequence = gsub(R2N_overhang, "", Sequence))
+
+gDNA_primers_df_for <- gDNA_primers_df %>% filter(Dir == "for")
+gDNA_primers_df_rev <- gDNA_primers_df %>% filter(Dir == "rev")
+
+#Add the length of the primer
+
+gDNA_primers_df_for <- gDNA_primers_df_for %>% mutate(Prim_leng_for = str_count(Sequence))
+gDNA_primers_df_rev <- gDNA_primers_df_rev %>% mutate(Prim_leng_rev = str_count(Sequence))
+
+to_add_for <- gDNA_primers_df_for %>% dplyr::select(ID, Prim_leng_for)
+to_add_rev <- gDNA_primers_df_rev %>% dplyr::select(ID, Prim_leng_rev)
+
+to_add_prim <- to_add_for  %>% left_join(to_add_rev, by = "ID")
+
+#Add to Geno_meta and Add position where amplicon starts after primer
+
+Geno_meta <- Geno_meta %>% left_join(to_add_prim, by = c("Amp_ID" = "ID"))
+Geno_meta <- Geno_meta %>% mutate(Start_seq = Start + Prim_leng_for,
+                                  End_seq = End - Prim_leng_rev)
+
+#____________________________________________________________
+
+
+#Add VAF average 
+
+#Make data frame for addition to delete REF and ALT allels
+GT_mat_mod <- GT_mat %>% 
+  mutate(across(everything(), ~ case_when(. == 0 ~ NA, 
+                                          . == 1 ~ 0, 
+                                          . == 2 ~ NA)))
+
+
+#Calculate average and add back 
+VAF_mod <- as.matrix(VAF) + as.matrix(GT_mat_mod) %>% as.data.frame()
+VAF_mod_avg <- rowMeans(VAF_mod , na.rm = TRUE) %>% as.data.frame()
+colnames(VAF_mod_avg) <- c("VAF_HET_avg")
+VAF_mod_avg$ID_Geno <- rownames(VAF_mod_avg)
+
+
+Geno_meta <- Geno_meta %>% left_join(VAF_mod_avg, by = "ID_Geno")
+
+#____________________________________________________________
+
+#Add repeats
+
+Geno_meta <- RepeatAnnot(data = Geno_meta, 
+                          repeats = repeats)
+
+#Add distance to repeats 
+
+Geno_meta <- Geno_meta %>% mutate(POS_Start_Rep_rel =  POS - Start_Rep ,
+                                  POS_End_Rep_rel = End_Rep - POS)
+
+
+
+#___________________________________________________________________________________________________________________________________________
+#Add this back to Seurat
+
+cDNA_data_Seurat@assays$Geno_filtered@meta.data <- Geno_meta
+
+#Save again
+saveRDS(cDNA_data_Seurat, "SDR006_Geno_full.rds")
+
+
+```
+
+
+
+
+#Plot coverage per amplicon
+
+```{r}
+
+cDNA_data_Seurat <- readRDS("SDR006_Geno_full.rds")
+gDNA_mat <- cDNA_data_Seurat@assays$gDNA$counts %>% as.data.frame()
+
+
+#Calculate average
+
+amp_coverage <- rowSums(gDNA_mat) %>% as.data.frame()
+colnames(amp_coverage) <- c("nReads_gDNA")
+amp_coverage$Amp_ID <-rownames(amp_coverage) 
+
+#Set order 
+
+amp_coverage <- amp_coverage %>% arrange(desc(nReads_gDNA))
+
+
+title = "Amp_coverage.pdf"
+
+p <- amp_coverage %>% 
+  	ggplot(aes(x=factor(Amp_ID, levels = unique(Amp_ID)), y = nReads_gDNA)) + 
+  	geom_bar(stat = "identity") +
+  	theme_classic() +
+  	theme(axis.text.x = element_text(angle = 45, vjust = 1, hjust=1)) +
+    #scale_y_continuous(limits = c(0,10000))+
+  	theme(plot.title = element_text(hjust=0.5, face="bold")) +
+  	ggtitle(title)+
+    labs(x = "coverage", y = "nReads")+
+    #scale_fill_manual(values = group_colors)+
+    guides(fill = "none")
+
+
+ggsave(filename = title, path = plot_save_dir, plot = p, device = "pdf", scale = 1,
+       width = 30, height = 15, units = "cm", dpi = 300)
+p
+
+```
+
+
+
+#Plot frac cells detected in vs coverage
+
+
+```{r}
+
+cut_off_RD = 10
+
+gDNA_mat_count <- ifelse(gDNA_mat > cut_off_RD, 1, 0)
+
+gDNA_cells_detect <- rowSums(gDNA_mat_count) %>% as.data.frame()
+colnames(gDNA_cells_detect) <- c("gDNA_cells_detect")
+gDNA_cells_detect$Amp_ID <- rownames(gDNA_cells_detect)
+gDNA_cells_detect$nCells_tot <- length(colnames(gDNA_mat))
+gDNA_cells_detect <- gDNA_cells_detect %>% mutate(nCells_frac = gDNA_cells_detect/nCells_tot)
+
+#Merge with above dataframe
+
+gDNA_cells_detect <- gDNA_cells_detect %>% left_join(amp_coverage, by = "Amp_ID")
+gDNA_cells_detect <- gDNA_cells_detect %>% mutate(nReads_gDNA_log1p = log1p(nReads_gDNA))
+
+#Classify dropouts 
+
+gDNA_cells_detect <- gDNA_cells_detect %>% mutate(Class = if_else(nCells_frac > 0.8, "HIGH", "LOW"))
+
+title = "nReads_gDNA_vs_frac_cells.pdf"
+p <- gDNA_cells_detect %>% 
+  	ggplot(
+  	 # aes(x=nReads_gDNA, y=nCells_frac, color=nFeature_gDNA_cut_perc)) + 
+    aes(x=nReads_gDNA, y=nCells_frac)) + 
+  	geom_point(size = 3) + 
+  geom_hline(yintercept = 0.8, linetype='dashed')+
+  scale_y_continuous(labels = scales::percent_format(scale = 100)) +
+	#scale_colour_gradient(low = "gray90", high = "#990000", limits = c(0,1)) +
+  #xlim(c(0,30))+
+    #ylim(c(0,30))+
+  	#scale_x_log10(limits = c(10,100000)) + 
+  	#scale_y_log10(limits = c(10,100000)) + 
+  	theme_classic() +
+  	#geom_vline(xintercept = 10) +
+  	#geom_hline(yintercept = 10) +
+      labs(x = "nReads (gDNA)", y = "Fraction of cells dectected (%)")+
+    	theme(plot.title = element_text(hjust=0.5, face="bold")) +
+      guides(fill = "none", color = "none")+
+  	#facet_wrap(~orig.ident)+
+  	ggtitle(title)
+
+
+p
+
+ggsave(filename = title, path = plot_save_dir, plot = p, device = "pdf", scale = 1,
+       width = 15, height = 15, units = "cm", dpi = 300)
+
+
+
+```
+
+
+
+
 
 
 
@@ -406,7 +658,7 @@ cDNA_data_Seurat <- readRDS("SDR006_Geno_full.rds")
 ```{r}
 #Define what to plot 
 
-out_put_dir <- "All_variants_plots"
+out_put_dir <- "/Users/dominik.lindenhofer/Documents/Data_Local/202301_SDR001/20240412_SDR001_SDRranger/SDR001_PE_Plots_GATK/All_variants_plots"
 plot_genes <- rownames(cDNA_data_Seurat@assays$Geno_filtered)
 
 i=plot_genes[1]
@@ -440,6 +692,337 @@ p
 
 
 
+#Plot some quality control plots - VAF vs read depth - add VAF as an assay 
+
+```{r}
+
+
+#Load data
+
+metadata <- cDNA_data_Seurat@meta.data
+
+#Get all matrices
+GT_mat <- cDNA_data_Seurat@assays$Geno_filtered$counts %>% as.data.frame()
+Geno_meta <- cDNA_data_Seurat@assays$Geno_filtered@meta.data
+
+Geno_list <- cDNA_data_Seurat@assays$Geno_filtered@misc
+list2env(Geno_list, envir = .GlobalEnv)
+
+#Set which variants to filter for 
+
+to_filter <- Geno_meta %>% filter(HET_count > 0.005 |
+                                  ALT_count > 0.005)
+to_filter <- to_filter$ID_Geno 
+
+#Subset matrixes for plots 
+
+GT_mat <- GT_mat[to_filter,]
+VAF <- VAF[to_filter,]
+DP <- DP[to_filter,]
+GQ <- GQ[to_filter,]
+
+#_________________________________________________________________________
+#Respahe data for plotting
+
+#Genotype - still need to add in WT coverage !!! - done somewhat above already
+GT_mat <- GT_mat %>% t() %>% as.data.frame()
+GT_mat <- GT_mat %>% mutate(cell = rownames(GT_mat))
+GT_mat_res <- GT_mat %>% reshape2::melt(id.vars = c("cell"),
+                                        variable.name = "ID", 
+                                        value.name = "Genotype")
+
+
+#VAF
+VAF <- VAF %>% t() %>% as.data.frame()
+VAF <- VAF %>% mutate(cell = rownames(VAF))
+VAF_res <- VAF %>% reshape2::melt(id.vars = c("cell"),
+                                  variable.name = "ID", 
+                                  value.name = "VAF")
+
+
+
+#Read depth 
+DP <- DP %>% t() %>% as.data.frame()
+DP <- DP %>% mutate(cell = rownames(DP))
+DP_res <- DP %>% reshape2::melt(id.vars = c("cell"),
+                                variable.name = "ID", 
+                                value.name = "DP")
+
+
+
+
+#Genotype quality 
+GQ <- GQ  %>% t() %>% as.data.frame()
+GQ  <- GQ  %>% mutate(cell = rownames(GQ))
+GQ_res <- GQ  %>% reshape2::melt(id.vars = c("cell"),
+                                variable.name = "ID", 
+                                value.name = "GQ")
+
+
+
+#Join in all of them 
+
+Combined_VAF_to_plot <- GT_mat_res %>% left_join(VAF_res, by = c("cell" = "cell", "ID" = "ID"))
+Combined_VAF_to_plot <- Combined_VAF_to_plot %>% left_join(DP_res, by = c("cell" = "cell", "ID" = "ID"))
+Combined_VAF_to_plot <- Combined_VAF_to_plot %>% left_join(GQ_res, by = c("cell" = "cell", "ID" = "ID"))
+
+
+
+unique(Combined_VAF_to_plot$Genotype)
+#Filter out NA values - change later 
+
+#Combined_VAF_to_plot <- Combined_VAF_to_plot %>% filter(!is.na(Genotype))
+Combined_VAF_to_plot$Genotype <- factor(Combined_VAF_to_plot$Genotype, levels = c(2, 1, 0, NA))
+
+
+
+
+#_________________________________________________________________________
+#Plot VAF vs read depth - Color genotype
+
+#Only do plots for variants that we wanted to find
+
+out_put_dir <- "Plots_GATK/All_variants_VAF_plots"
+plot_genes <- unique(to_filter)
+
+
+
+i=plot_genes[1]
+
+#group_colors <- c("1/1" = "forestgreen", "0/1" = "cyan2", "0/0" = "dodgerblue3", "./." = "grey")
+group_colors <- c("2" = "forestgreen", "1" = "cyan2", "0" = "dodgerblue3", "NA" = "grey")
+
+
+for (i in unique(plot_genes)){
+  Df_to_plot_i <- Combined_VAF_to_plot %>% filter(ID == i)
+  
+  p1 <-   Df_to_plot_i %>%
+    ggplot(aes(x=VAF, y=DP, color=Genotype)) + 
+  	geom_point(size = 5) + 
+	#scale_colour_gradient(low = "gray90", high = "#990000", limits = c(0,1)) +
+  #xlim(c(0,30))+
+    #ylim(c(0,30))+
+    scale_color_manual(values = group_colors )+
+  	scale_x_continuous(limits = c(0,1)) + 
+  	scale_y_log10(limits = c(1,10000), labels = scales::trans_format("log10", scales::math_format(10^.x))) +  
+  	theme_classic() +
+    labs(x = "Variant allele frequency (VAF)", y = "gDNA reads (log10)")+
+  	#geom_vline(xintercept = 10) +
+  	#geom_hline(yintercept = 10) +
+    	theme(plot.title = element_text(hjust=0.5, face="bold")) +
+    #facet_wrap("Type2")+
+  	ggtitle(i)
+  
+  
+  p2 <- Df_to_plot_i %>%
+    ggplot(aes(x=VAF, y=DP, color=GQ)) + 
+  	geom_point(size = 5) + 
+	scale_colour_gradient(low = "gray90", high = "#990000", limits = c(1,99)) +
+  #xlim(c(0,30))+
+    #ylim(c(0,30))+
+    #scale_color_manual(values = group_colors )+
+  	scale_x_continuous(limits = c(0,1)) + 
+  	scale_y_log10(limits = c(1,10000), labels = scales::trans_format("log10", scales::math_format(10^.x))) +  
+  	theme_classic() +
+        labs(x = "Variant allele frequency (VAF)", y = "gDNA reads (log10)")+
+  	#geom_vline(xintercept = 10) +
+  	#geom_hline(yintercept = 10) +
+    	theme(plot.title = element_text(hjust=0.5, face="bold")) +
+        #facet_wrap("Type2")+
+  	ggtitle(i)
+  
+p <- p1 + p2
+  
+
+  ggsave(paste(i,".pdf",sep = ""), path = out_put_dir, plot = p, device = "pdf", scale = 1,
+         width = 60, height = 15, units = "cm", dpi = 300)
+    
+}
+
+p
+
+
+
+
+
+```
+
+
+#Adjust to include positions with no variants - and ref seqeuence - and primers bind
+
+
+```{r}
+
+
+
+
+#Load metadata
+Geno_meta <- cDNA_data_Seurat@assays$Geno_filtered@meta.data
+
+#Get ref_seqs
+ref_seqs <- read.csv("REF_lists/SDR006_gDNA_targets-V3.csv")
+ref_seqs <- ref_seqs %>% mutate(ID = gsub("_", "-", ID))
+
+to_plot <- unique(Geno_meta$Amp_ID)
+
+outdir <- "Plots_GATK/02_Noise_variants"
+
+i = to_plot[1]
+group_colors_Geno <- c("ALT_count" = "forestgreen", "HET_count" = "cyan2", "REF_count" = "dodgerblue3", "NA_count" = "grey")
+i = "OEG-AMPL778463-pELS"
+
+i = "OEG-AMPL778643-H3K4"
+
+#Loop over all 
+
+for(i in to_plot){
+Geno_meta_i <- Geno_meta %>% filter(Amp_ID == i)
+start_amp <- unique(Geno_meta_i$Start)
+end_amp <- unique(Geno_meta_i$End)
+start_seq <- unique(Geno_meta_i$Start_seq)
+end_seq <- unique(Geno_meta_i$End_seq)
+chromosome <- unique(Geno_meta_i$X.CHROM)
+
+#Select columns for plotting to reshape
+
+Geno_meta_i_sel <- Geno_meta_i %>% 
+  dplyr::select(ID_Geno, NA_count, REF_count, HET_count, ALT_count)
+
+
+#Select columns for merging later to add positional information 
+
+Geno_meta_POS_i <- Geno_meta_i %>% dplyr::select(ID_Geno, POS, REF, ALT)
+
+
+#Add to both the positions with not called variants 
+
+#Determine most frequent NA count to add to ref seqs
+
+NA_count_REF_2_i <- as.numeric(names(which.max(table(Geno_meta_i_sel$NA_count))))
+REF_count_REF_2_i <- 1-NA_count_REF_2_i
+
+#Get all positions and reference sequence
+all_pos_i <- seq(start_amp, end_amp)
+to_fill_i <- setdiff(all_pos_i, Geno_meta_POS_i$POS)
+
+ref_seq_i <- ref_seqs %>% filter(ID == i)
+ref_seq_i <- as.character(ref_seq_i$Sequence)
+ref_seq_i <- strsplit(ref_seq_i, "")[[1]]
+
+
+#Make dataframe with all positions and counts to add
+to_add_refs_i <- data.frame(POS = all_pos_i, REF = ref_seq_i)
+
+#Filter for the ones that are missing 
+to_add_refs_i <- to_add_refs_i %>% filter(POS %in% to_fill_i)
+
+Geno_meta_i_sel_add <- to_add_refs_i %>% mutate(ID_Geno = str_c(chromosome, POS, REF, sep = "-"), 
+                                          NA_count = NA_count_REF_2_i, 
+                                          REF_count = REF_count_REF_2_i, 
+                                          HET_count = 0,
+                                          ALT_count = 0) %>% 
+                                                dplyr::select(-POS, -REF)
+  
+  
+  
+
+
+Geno_meta_POS_i_add <- to_add_refs_i %>% mutate(ID_Geno = str_c(chromosome, POS, REF, sep = "-"), 
+                                          ALT = REF) %>%
+                                                dplyr::select(ID_Geno, POS, REF, ALT)
+
+
+
+
+#Add to both 
+
+Geno_meta_i_sel <- rbind(Geno_meta_i_sel, Geno_meta_i_sel_add)
+Geno_meta_POS_i <- rbind(Geno_meta_POS_i, Geno_meta_POS_i_add )
+
+
+#Make long for plotting 
+Geno_meta_i_long <- Geno_meta_i_sel %>% 
+  pivot_longer(cols = -ID_Geno, names_to = "Geno", values_to = "frac")
+
+
+
+
+Geno_meta_i_long <- Geno_meta_i_long %>% left_join(Geno_meta_POS_i, by = "ID_Geno")
+
+#Geno_meta_i_long <- Geno_meta_i_long %>% full_join(Geno_meta_POS_i, by = "ID_Geno")
+
+
+#Plot
+
+
+title = paste0(i,"_Variant_noise.pdf")
+title1 = paste0(i,"_Variant_noise_full_range.pdf")
+
+p1 <- Geno_meta_i_long  %>% 
+  	ggplot(
+  	 # aes(x=nReads_gDNA, y=nCells_frac, color=nFeature_gDNA_cut_perc)) + 
+    aes(x=POS, y=frac, color = Geno)) + 
+  	geom_point(size = 1) + 
+  #geom_hline(yintercept = 0.8, linetype='dashed')+
+	#scale_colour_gradient(low = "gray90", high = "#990000", limits = c(0.8,1)) +
+  #xlim(c(0,30))+
+    #ylim(c(0,30))+
+  	#scale_x_log10(limits = c(10,100000)) + 
+  	#scale_y_log10(limits = c(10,100000)) + 
+    scale_y_continuous(limits = c(0,1), labels = scales::percent_format(scale = 100))+
+    labs(x = "Position", y = "Fraction of cells called (%)")+
+    scale_x_continuous(limits = c(start_amp, end_amp))+
+  	theme_classic() +
+     scale_color_manual(values = group_colors_Geno) +
+  	#geom_vline(xintercept = 10) +
+  	geom_vline(xintercept = c(start_seq, end_seq), linetype = "dashed") +
+    	theme(plot.title = element_text(hjust=0.5, face="bold")) +
+      #guides(fill = "none", color = "none")+
+  	#facet_wrap(~orig.ident)+
+  	ggtitle(title1)
+
+
+
+
+title2 = paste0(i,"_Variant_noise_limited_range.pdf")
+
+p2 <- Geno_meta_i_long  %>% 
+  	ggplot(
+  	 # aes(x=nReads_gDNA, y=nCells_frac, color=nFeature_gDNA_cut_perc)) + 
+    aes(x=POS, y=frac, color = Geno)) + 
+  	geom_point(size = 1) + 
+  #geom_hline(yintercept = 0.8, linetype='dashed')+
+	#scale_colour_gradient(low = "gray90", high = "#990000", limits = c(0.8,1)) +
+  #xlim(c(0,30))+
+    #ylim(c(0,30))+
+  	#scale_x_log10(limits = c(10,100000)) + 
+  	#scale_y_log10(limits = c(10,100000)) + 
+    scale_y_continuous(limits = c(0,0.05), labels = scales::percent_format(scale = 100))+
+    labs(x = "Position", y = "Fraction of cells called (%)")+
+    scale_x_continuous(limits = c(start_amp, end_amp))+
+      scale_color_manual(values = group_colors_Geno) +
+  	theme_classic() +
+  	#geom_vline(xintercept = 10) +
+  	geom_vline(xintercept = c(start_seq, end_seq), linetype = "dashed") +
+    	theme(plot.title = element_text(hjust=0.5, face="bold")) +
+      #guides(fill = "none", color = "none")+
+  	#facet_wrap(~orig.ident)+
+  	ggtitle(title2)
+
+
+
+p <- p1+p2
+
+
+ggsave(filename = title, path = outdir, plot = p, device = "pdf", scale = 1,
+       width = 40, height = 15, units = "cm", dpi = 300)
+}
+
+
+
+
+```
+
 
 
 
@@ -472,7 +1055,7 @@ Geno_meta <- cbind(Geno_meta, nCells_per_Variant)
 ```{r}
 
 variants_annot <- read.csv("REF_lists/edits_amended.csv")
-annot <- read.csv("REF_lists/SDR006_genomic_annotation_file.csv")
+annot <- read.csv("REF_lists/SDR006_genomic_annotation_file.csv") %>% dplyr::rename(Chromosome = seqnames, Start = start, End = end)
 
 variants_annot <- variants_annot %>% filter(ID != "non-targeting")
 variants_annot <- variants_annot %>% mutate(chrom = str_c("chr", snp_chrom))
@@ -531,16 +1114,6 @@ variants_annot_filter <- variants_annot_filter %>% left_join(variants_annot_add,
 Geno_meta_filter <- Geno_meta %>% left_join(variants_annot_filter, by = c("Amp_ID" = "Amp_ID"))
 
 
-#filter by position 
-Geno_meta_filter <- Geno_meta_filter %>% filter(POS == hg38pos)
-
-#filter for POU5F1
-
-i = "POU5F1"
-Geno_meta_filter <- Geno_meta_filter %>% filter(Gene_annot == i)
-
-
-
 
 
 ```
@@ -551,6 +1124,8 @@ Geno_meta_filter <- Geno_meta_filter %>% filter(Gene_annot == i)
 
 
 ```{r}
+
+
 
 #Load data
 
@@ -571,9 +1146,17 @@ all.equal(Geno_meta$ID_Geno, colnames(Geno_mat))
 
 out_put_dir <- "Plots_GATK/All_variants_violin_plots_inteded_pos"
 
+#__________
+#filter by position 
+Geno_meta_filter <- Geno_meta %>% left_join(variants_annot_filter, by = c("Amp_ID" = "Amp_ID"))
+Geno_meta_filter <- Geno_meta_filter %>% filter(POS == hg38pos)
+
 
 i=1
 i=34
+
+ID_Geno_i = "POU5F1-chr6-31164637-G-A-synonymous:variant" 
+
 #Set colors 
 
 group_colors <- c("2" = "forestgreen", "1" = "cyan2", "0" = "dodgerblue3", "NA" = "grey")
@@ -630,147 +1213,6 @@ p
 
 
 
-#Plot some quality control plots - VAF vs read depth - only for intended ones
-
-```{r}
-
-
-#Load data
-
-cDNA_data_Seurat <- readRDS("SDR006_Geno_full.rds")
-
-#Get all matrices
-GT_mat <- cDNA_data_Seurat@assays$Geno_filtered$counts %>% as.data.frame()
-Geno_meta <- cDNA_data_Seurat@assays$Geno_filtered@meta.data
-
-Geno_list <- cDNA_data_Seurat@assays$Geno_filtered@misc
-list2env(Geno_list, envir = .GlobalEnv)
-
-
-
-
-#_________________________________________________________________________
-#Respahe data for plotting
-
-#Genotype - still need to add in WT coverage !!! - done somewhat above already
-GT_mat <- GT_mat %>% t() %>% as.data.frame()
-GT_mat <- GT_mat %>% mutate(cell = rownames(GT_mat))
-GT_mat_res <- GT_mat %>% reshape2::melt(id.vars = c("cell"),
-                                        variable.name = "ID", 
-                                        value.name = "Genotype")
-
-
-#VAF
-VAF <- VAF %>% t() %>% as.data.frame()
-VAF <- VAF %>% mutate(cell = rownames(VAF))
-VAF_res <- VAF %>% reshape2::melt(id.vars = c("cell"),
-                                  variable.name = "ID", 
-                                  value.name = "VAF")
-
-
-
-#Read depth 
-DP <- DP %>% t() %>% as.data.frame()
-DP <- DP %>% mutate(cell = rownames(DP))
-DP_res <- DP %>% reshape2::melt(id.vars = c("cell"),
-                                variable.name = "ID", 
-                                value.name = "DP")
-
-
-
-
-#Genotype quality 
-GQ <- GQ  %>% t() %>% as.data.frame()
-GQ  <- GQ  %>% mutate(cell = rownames(GQ))
-GQ_res <- GQ  %>% reshape2::melt(id.vars = c("cell"),
-                                variable.name = "ID", 
-                                value.name = "GQ")
-
-
-
-#Join in all of them 
-
-Combined_VAF_to_plot <- GT_mat_res %>% left_join(VAF_res, by = c("cell" = "cell", "ID" = "ID"))
-Combined_VAF_to_plot <- Combined_VAF_to_plot %>% left_join(DP_res, by = c("cell" = "cell", "ID" = "ID"))
-Combined_VAF_to_plot <- Combined_VAF_to_plot %>% left_join(GQ_res, by = c("cell" = "cell", "ID" = "ID"))
-
-
-unique(Combined_VAF_to_plot$Genotype)
-#Filter out NA values - change later 
-
-#Combined_VAF_to_plot <- Combined_VAF_to_plot %>% filter(!is.na(Genotype))
-Combined_VAF_to_plot$Genotype <- factor(Combined_VAF_to_plot$Genotype, levels = c(2, 1, 0, NA))
-
-
-#_________________________________________________________________________
-#Plot VAF vs read depth - Color genotype
-
-out_put_dir <- "Plots_GATK/All_variants_VAF_plots"
-plot_genes <- unique(Geno_meta_filter$ID_Geno)
-
-
-
-i=plot_genes[28]
-
-#group_colors <- c("1/1" = "forestgreen", "0/1" = "cyan2", "0/0" = "dodgerblue3", "./." = "grey")
-group_colors <- c("2" = "forestgreen", "1" = "cyan2", "0" = "dodgerblue3", "NA" = "grey")
-
-
-for (i in unique(plot_genes)){
-  Df_to_plot_i <- Combined_VAF_to_plot %>% filter(ID == i)
-  
-  p1 <-   Df_to_plot_i %>%
-    ggplot(aes(x=VAF, y=DP, color=Genotype)) + 
-  	geom_point(size = 4) + 
-	#scale_colour_gradient(low = "gray90", high = "#990000", limits = c(0,1)) +
-  #xlim(c(0,30))+
-    #ylim(c(0,30))+
-    scale_color_manual(values = group_colors )+
-  	scale_x_continuous(limits = c(0,1)) + 
-  	scale_y_log10(limits = c(1,1000)) + 
-  	theme_classic() +
-  	#geom_vline(xintercept = 10) +
-  	#geom_hline(yintercept = 10) +
-    	theme(plot.title = element_text(hjust=0.5, face="bold")) +
-  	ggtitle(i)
-  
-  
-  p2 <- Df_to_plot_i %>%
-    ggplot(aes(x=VAF, y=DP, color=GQ)) + 
-  	geom_point(size = 4) + 
-	scale_colour_gradient(low = "gray90", high = "#990000", limits = c(1,99)) +
-  #xlim(c(0,30))+
-    #ylim(c(0,30))+
-    #scale_color_manual(values = group_colors )+
-  	scale_x_continuous(limits = c(0,1)) + 
-  	scale_y_log10(limits = c(1,1000)) + 
-  	theme_classic() +
-  	#geom_vline(xintercept = 10) +
-  	#geom_hline(yintercept = 10) +
-    	theme(plot.title = element_text(hjust=0.5, face="bold")) +
-  	ggtitle(i)
-  
-p <- p1 + p2
-  
-
-  ggsave(paste(i,".pdf",sep = ""), path = out_put_dir, plot = p, device = "pdf", scale = 1,
-         width = 30, height = 15, units = "cm", dpi = 300)
-    
-}
-
-p
-
-
-```
-
-
-
-
-
-
-
-
-
 ## Link editing with gene expression - Do statistical testing using MAST from Seurat 
 
 ```{r}
@@ -786,12 +1228,13 @@ Geno_meta <- cDNA_data_Seurat@assays$Geno_filtered@meta.data
 Geno_list <- cDNA_data_Seurat@assays$Geno_filtered@misc
 list2env(Geno_list, envir = .GlobalEnv)
 
-
-
-
-
 #implement stasitical testing using MAST
 i=28
+
+#__________
+#filter by position 
+Geno_meta_filter <- Geno_meta %>% left_join(variants_annot_filter, by = c("Amp_ID" = "Amp_ID"))
+Geno_meta_filter <- Geno_meta_filter %>% filter(POS == hg38pos)
 
 
 DE_test_out <- list()
@@ -1015,7 +1458,7 @@ DE_test_out <- DE_test_out %>% mutate(Significant = if_else(p_val_adj <= 0.05, T
 #DE_test_out <- DE_test_out %>% mutate(SNP_ID_annot = gsub("^rs*\\d+", "SNP", SNP_ID_annot))
 #DE_test_out <- DE_test_out %>% mutate(SNP_ID_annot = gsub("^SNP_rs*\\d+", "SNP", SNP_ID_annot))
 DE_test_out <- DE_test_out %>% mutate(target_to_plot = ifelse(Significant == TRUE, Gene_annot, NA))
-DE_test_out$avg_log2FC <- DE_test_out$avg_log2FC*-1
+#DE_test_out$avg_log2FC <- DE_test_out$avg_log2FC*-1
 
 
 #Make volcano plot
@@ -1024,25 +1467,6 @@ DE_test_out$avg_log2FC <- DE_test_out$avg_log2FC*-1
 max_lfc <- max(DE_test_out_sig$avg_log2FC)
 
 group_colors = c("TRUE" = "#5E1675")
-
-title = "Volcano_plot_DE_testing_all_genes.pdf"
-p <- DE_test_out %>%
-  ggplot(aes(x = avg_log2FC, y = -log10(p_val_adj), color = Significant, shape=Test)) +
-  scale_color_manual(values = group_colors)+
-  #facet_wrap(~target_type, ncol = 4) +
-  geom_point(size = 7) +
-  geom_hline(yintercept = -log10(0.05), linetype = "dashed") + 
-  geom_vline(xintercept = 0, linetype = "dashed") +
-  #scale_color_manual(values = c("control_PE" = "gray42", "SNP" = "purple", "TSS" = "firebrick3")) +
-  scale_x_continuous(limits = c(-max_lfc, max_lfc)) +
-  labs(title = title , y = "-log10(adj. p-value)") +
-  theme_classic()+
-      guides(fill = "none", color = "none")
-
-p
-
-ggsave(filename = title, path = "Plots_GATK" , plot = p, device = "pdf", scale = 1,
-       width = 15, height = 15, units = "cm", dpi = 300)
 
 
 title = "Volcano_plot_DE_testing_intended_genes.pdf"
@@ -1068,11 +1492,19 @@ ggsave(filename = title, path = "Plots_GATK" , plot = p, device = "pdf", scale =
 
 
 
+
+to_file <- DE_test_out %>%
+  filter(Gene == Gene_annot) %>% dplyr::select(p_val_adj, avg_log2FC, Test)
+
+#to_file <- to_file %>% mutate(ID = sub(".*?(chr[0-9XYM]+-[0-9]+-[ACTG]+-[ACTG]+).*", "\\1", ID))
+
+
+file_name = "Fig3_M_g_Volcano_plot_DE_testing_intended_genes.csv"
+write.csv(to_file, paste0(file_save_dir, "/", file_name), row.names = FALSE) 
+
+
+
 ```
-
-
-
-
 
 
 
@@ -1222,6 +1654,440 @@ out_put_dir <- "Plots_GATK/All_variants_expression_vs_VAF_significant_Genotype_d
 plot_genes <- unique(Geno_meta_filter$ID_Geno)
 
 
+i=plot_genes[33] #USED
+#i=plot_genes[28]
+
+i
+#group_colors <- c("1/1" = "forestgreen", "0/1" = "cyan2", "0/0" = "dodgerblue3", "./." = "grey")
+group_colors <- c("2" = "forestgreen", "1" = "cyan2", "0" = "dodgerblue3", "NA" = "grey")
+levels = c(0, 1, 2)
+
+
+for (i in unique(plot_genes)){
+  
+Df_to_plot_i <- Combined_VAF_to_plot %>%
+  filter(ID == i, !is.na(Genotype), Expression != 0) %>%
+  complete(Genotype = levels, nesting(Gene_annot), fill = list(Expression = NA)) %>%
+  mutate(Genotype = factor(Genotype, levels = levels))
+
+counts <- Df_to_plot_i %>%
+  group_by(Genotype) %>%
+  summarise(Count = n())
+
+
+
+  
+p <-  ggplot(Df_to_plot_i, aes(x = Genotype, y = Expression, fill = Genotype)) + 
+      geom_text(data = counts, aes(x = Genotype, y = Inf, label = Count), position = position_nudge(y = -0.05), hjust = 0.5, vjust = 1)+
+      geom_violin(alpha = 0.4, adjust=1, scale = "width") +
+      #geom_text(aes(x = 1, y = 1, label = sprintf("P-value: %e", p_value)), color = "black", size = 4) +
+      geom_boxplot(width = 0.25) +
+      scale_fill_manual(values = group_colors) +
+      labs(x = "Genotype", y = "Expression") +
+      scale_y_continuous(trans = "log10", limits = c(1, 1000), breaks = c(1,10,100,1000)) + # Removed limy, adjust y-axis limits elsewhere if needed
+      theme_classic() +
+       ggtitle(as.character(i))+
+      guides(fill = FALSE, color = FALSE)
+ p
+
+  ggsave(paste(i,".pdf",sep = ""), path = out_put_dir, plot = p, device = "pdf", scale = 1,
+         width = 10, height = 15, units = "cm", dpi = 300)
+    
+}
+
+p
+
+avg <- Df_to_plot_i %>% group_by(Genotype) %>% summarize(avg = mean(Expression))
+
+
+
+to_file <- Df_to_plot_i 
+
+file_name = "Fig3_S8_a_Violin_plot_POU5F1.csv"
+write.csv(to_file, paste0(file_save_dir, "/", file_name), row.names = FALSE) 
+
+nCells <- to_file %>% group_by(Genotype) %>% summarize(count = n())
+
+
+```
+
+
+
+
+
+
+## Link editing with gene expression - Do statistical testing using MAST from Seurat 
+
+```{r}
+
+#Load data
+
+cDNA_data_Seurat <- readRDS("SDR006_Geno_full.rds")
+
+#Get all matrices
+Geno_mat <- cDNA_data_Seurat@assays$Geno_filtered$counts %>% t() %>% as.data.frame()
+Geno_meta <- cDNA_data_Seurat@assays$Geno_filtered@meta.data
+
+Geno_list <- cDNA_data_Seurat@assays$Geno_filtered@misc
+list2env(Geno_list, envir = .GlobalEnv)
+
+#implement stasitical testing using MAST
+i=28
+
+#__________
+#filter by other metrics
+Geno_meta_filter <- Geno_meta %>% left_join(variants_annot_filter, by = c("Amp_ID" = "Amp_ID"))
+Geno_meta_filter <- Geno_meta_filter %>% filter(HET_count > 0.005 | 
+                                                ALT_count > 0.005)
+
+
+DE_test_out <- list()
+
+for (i in 1:nrow(Geno_meta_filter)) {
+  tryCatch({
+row_i <- Geno_meta_filter[i, ]
+ID_Geno_i <- row_i$ID_Geno
+Target_i <- row_i$Gene_annot
+
+
+#Get Genotype information 
+Geno_i <- data.frame(Genotype = Geno_mat[,ID_Geno_i])
+rownames(Geno_i) <- rownames(Geno_mat)
+
+
+#Get variable for testing 
+Geno_types_found_i <- Geno_i %>%
+  filter(!is.na(Genotype)) %>%
+  distinct(Genotype) %>%
+  arrange(Genotype) %>%
+  pull(1)
+
+counts <- Geno_i %>%
+  group_by(Genotype) %>%
+  summarise(Count = n()) %>%
+  arrange(Genotype)
+
+
+
+#Run conditional loop depending on what Genotypes are found
+
+if(all(Geno_types_found_i %in% c(0, 1, 2)) && length(Geno_types_found_i) > 2 && counts$Count[3] > 1) {
+
+#Define cells in groups for testing
+
+Geno_i_0 <- Geno_i %>% filter(Genotype == 0)
+Geno_i_1 <- Geno_i %>% filter(Genotype == 1)
+Geno_i_2 <- Geno_i %>% filter(Genotype == 2)
+
+cells_i_0 <- rownames(Geno_i_0)
+cells_i_1 <- rownames(Geno_i_1)
+cells_i_2 <- rownames(Geno_i_2)
+
+
+#Run differential testing 
+
+test_result_0_1 <- FindMarkers(object = cDNA_data_Seurat, assay = "RNA", slot = "data", ident.1 = cells_i_0, ident.2 = cells_i_1, test.use = "MAST", min.pct = 0, logfc.threshold = 0)
+test_result_0_2 <- FindMarkers(object = cDNA_data_Seurat, assay = "RNA", slot = "data", ident.1 = cells_i_0, ident.2 = cells_i_2, test.use = "MAST", min.pct = 0, logfc.threshold = 0)
+test_result_1_2 <- FindMarkers(object = cDNA_data_Seurat, assay = "RNA", slot = "data", ident.1 = cells_i_1, ident.2 = cells_i_2, test.use = "MAST", min.pct = 0, logfc.threshold = 0)
+
+#Add in information 
+
+#Get count number
+
+counts_0 <- counts %>% filter(Genotype == 0) %>% pull(2)
+counts_1 <- counts %>% filter(Genotype == 1) %>% pull(2)
+counts_2 <- counts %>% filter(Genotype == 2) %>% pull(2)
+
+#Add information to output
+
+test_result_0_1 <- test_result_0_1 %>% 
+                   mutate(Test = "0_1",
+                          ID_Geno = ID_Geno_i,
+                          Ncells_Cond1 = counts_0, 
+                          Ncells_Cond2 = counts_1,
+                          Gene = rownames(test_result_0_1))
+
+
+test_result_0_2 <- test_result_0_2 %>% 
+                   mutate(Test = "0_2",
+                          ID_Geno = ID_Geno_i,
+                          Ncells_Cond1 = counts_0, 
+                          Ncells_Cond2 = counts_2,
+                          Gene = rownames(test_result_0_2))
+
+test_result_1_2 <- test_result_1_2 %>% 
+                   mutate(Test = "1_2",
+                          ID_Geno = ID_Geno_i,
+                          Ncells_Cond1 = counts_1, 
+                          Ncells_Cond2 = counts_2,
+                          Gene = rownames(test_result_1_2))
+
+
+#Combine 
+
+test_result_i <- rbind(test_result_0_1, test_result_0_2, test_result_1_2)
+
+
+} else if(all(Geno_types_found_i %in% c(0, 1, 2)) && length(Geno_types_found_i) > 2 && counts$Count[3] < 2){ 
+  
+  
+   
+
+#Define cells in groups for testing
+Geno_i_0 <- Geno_i %>% filter(Genotype == 0)
+Geno_i_1 <- Geno_i %>% filter(Genotype == 1)
+
+cells_i_0 <- rownames(Geno_i_0)
+cells_i_1 <- rownames(Geno_i_1)
+
+
+
+#Run differential testing 
+test_result_0_1 <- FindMarkers(object = cDNA_data_Seurat, assay = "RNA", slot = "data", ident.1 = cells_i_0, ident.2 = cells_i_1, test.use = "MAST", min.pct = 0, logfc.threshold = 0)
+
+
+#Add in information 
+
+counts_0 <- counts %>% filter(Genotype == 0) %>% pull(2)
+counts_1 <- counts %>% filter(Genotype == 1) %>% pull(2)
+
+#Add information to output
+
+test_result_0_1 <- test_result_0_1 %>% 
+                   mutate(Test = "0_1",
+                          ID_Geno = ID_Geno_i,
+                          Ncells_Cond1 = counts_0, 
+                          Ncells_Cond2 = counts_1, 
+                          Gene = rownames(test_result_0_1))
+
+#Define output
+
+test_result_i <- test_result_0_1
+  
+}else if (all(Geno_types_found_i %in% c(0, 1)) && length(Geno_types_found_i) > 1) {
+
+  
+
+#Define cells in groups for testing
+Geno_i_0 <- Geno_i %>% filter(Genotype == 0)
+Geno_i_1 <- Geno_i %>% filter(Genotype == 1)
+
+cells_i_0 <- rownames(Geno_i_0)
+cells_i_1 <- rownames(Geno_i_1)
+
+
+
+#Run differential testing 
+test_result_0_1 <- FindMarkers(object = cDNA_data_Seurat, assay = "RNA", slot = "data", ident.1 = cells_i_0, ident.2 = cells_i_1, test.use = "MAST", min.pct = 0, logfc.threshold = 0)
+
+
+#Add in information 
+
+counts_0 <- counts %>% filter(Genotype == 0) %>% pull(2)
+counts_1 <- counts %>% filter(Genotype == 1) %>% pull(2)
+
+#Add information to output
+
+test_result_0_1 <- test_result_0_1 %>% 
+                   mutate(Test = "0_1",
+                          ID_Geno = ID_Geno_i,
+                          Ncells_Cond1 = counts_0, 
+                          Ncells_Cond2 = counts_1, 
+                          Gene = rownames(test_result_0_1))
+
+
+
+#Define output
+
+test_result_i <- test_result_0_1
+
+
+}else{
+
+        # Handle the case when Geno_types_found_i doesn't meet the conditions
+      message("Genotype types do not meet conditions for row ", i)
+      # Optionally, you can add specific handling code here
+      next  # Skip to the next iteration 
+  
+  
+}
+
+#Add list to ouput
+DE_test_out[[i]] <- bind_rows(test_result_i)
+
+
+  
+  }, error = function(e) {
+    # This function is called if an error occurs
+    message(paste("Error in iteration", i, ":", e$message))
+    # Optionally, you can do other error handling here
+  })
+}
+
+
+
+# Combine all test results into a single dataframe
+DE_test_out <- bind_rows(DE_test_out)
+DE_test_out <- unique(DE_test_out)
+
+write.csv(DE_test_out, file = "SDR006_DE_test_out_freq_SNP.csv", quote = FALSE, row.names = FALSE, col.names = TRUE)
+
+
+
+```
+
+
+
+
+
+
+## Visualize DE testing output
+
+```{r}
+
+#Get data and prepare
+
+DE_test_out <- read.csv("SDR006_DE_test_out_freq_SNP.csv")
+
+#Add target name to DE output 
+
+to_add <- Geno_meta  %>% select(ID_Geno, Gene_annot)
+
+DE_test_out <- DE_test_out %>% left_join(to_add, by = "ID_Geno")
+
+#Add column for significant
+
+DE_test_out_sig <- DE_test_out %>% filter(p_val_adj <= 0.05 & Gene == Gene_annot)
+#DE_test_out_sig <- DE_test_out %>% filter(Gene == Gene_annot)
+
+DE_test_out <- DE_test_out %>% mutate(Significant = if_else(p_val_adj <= 0.05, TRUE, FALSE))
+#DE_test_out <- DE_test_out %>% mutate(SNP_ID_annot = gsub("^rs*\\d+", "SNP", SNP_ID_annot))
+#DE_test_out <- DE_test_out %>% mutate(SNP_ID_annot = gsub("^SNP_rs*\\d+", "SNP", SNP_ID_annot))
+DE_test_out <- DE_test_out %>% mutate(target_to_plot = ifelse(Significant == TRUE, Gene_annot, NA))
+DE_test_out$avg_log2FC <- DE_test_out$avg_log2FC*-1
+
+
+#Make volcano plot
+
+#max_lfc <- -min(DE_test_out$avg_log2FC)
+max_lfc <- max(DE_test_out_sig$avg_log2FC)
+
+group_colors = c("TRUE" = "#5E1675")
+
+
+
+ggsave(filename = title, path = "Plots_GATK" , plot = p, device = "pdf", scale = 1,
+       width = 15, height = 15, units = "cm", dpi = 300)
+
+
+title = "Volcano_plot_DE_testing_intended_genes_freq.pdf"
+p <- DE_test_out %>%
+  filter(Gene == Gene_annot) %>%
+  ggplot(aes(x = avg_log2FC, y = -log10(p_val_adj), color = Significant, shape=Test)) +
+  scale_color_manual(values = group_colors)+
+  #facet_wrap(~target_type, ncol = 4) +
+  geom_point(size = 7) +
+  geom_hline(yintercept = -log10(0.05), linetype = "dashed") + 
+  geom_vline(xintercept = 0, linetype = "dashed") +
+  #scale_color_manual(values = c("control_PE" = "gray42", "SNP" = "purple", "TSS" = "firebrick3")) +
+  scale_x_continuous(limits = c(-3, 3)) +
+  labs(title = title , y = "-log10(adj. p-value)") +
+  theme_classic()+
+      guides(fill = "none", color = "none", shape = "none")
+
+p
+
+ggsave(filename = title, path = "Plots_GATK" , plot = p, device = "pdf", scale = 1,
+       width = 15, height = 15, units = "cm", dpi = 300)
+
+
+#To Check 
+
+p <- DE_test_out %>%
+  filter(Gene == Gene_annot)
+
+
+
+```
+
+
+
+
+
+
+
+
+
+
+#Plot Genotypes vs expression - as discrete events
+
+```{r}
+
+#Use Geno_filter from above still for looping
+
+#Load data
+
+cDNA_data_Seurat <- readRDS("SDR006_Geno_full.rds")
+
+#Get all matrices
+Geno_meta <- cDNA_data_Seurat@assays$Geno_filtered@meta.data
+
+Geno_list <- cDNA_data_Seurat@assays$Geno_filtered@misc
+list2env(Geno_list, envir = .GlobalEnv)
+
+
+#Get matrices
+Geno_mat <- cDNA_data_Seurat@assays$Geno_filtered$counts %>% t() %>% as.data.frame()
+RNA_mat <- cDNA_data_Seurat@assays$RNA$data %>% t() %>% as.data.frame() %>% exp() -1
+
+VAF <- VAF %>% t() %>% as.data.frame()
+
+#_________________________________________________________________________
+#Respahe data for plotting
+
+to_add <- Geno_meta %>% select(ID_Geno, Gene_annot)
+
+#RNA mat
+RNA_mat_res <- RNA_mat %>% mutate(cell = rownames(RNA_mat)) %>% reshape2::melt(id.vars = c("cell"),
+                                                      variable.name = "ID", 
+                                                      value.name = "Expression")
+#Geno matrix
+Geno_mat_res <- Geno_mat %>% mutate(cell = rownames(Geno_mat)) %>%
+                              reshape2::melt(id.vars = c("cell"),
+                                             variable.name = "ID", 
+                                             value.name = "Genotype")
+Geno_mat_res <- Geno_mat_res %>% left_join(to_add, by = c("ID" = "ID_Geno") )
+
+
+#VAF matrix
+VAF_mat_res <- VAF %>% mutate(cell = rownames(VAF)) %>% reshape2::melt(id.vars = c("cell"),
+                                                      variable.name = "ID", 
+                                                      value.name = "VAF")
+VAF_mat_res <- VAF_mat_res %>% left_join(to_add, by = c("ID" = "ID_Geno") )
+
+
+#Join in all of them 
+
+Combined_VAF_to_plot <- VAF_mat_res  %>% left_join(Geno_mat_res, by = c("cell" = "cell", "ID" = "ID", "Gene_annot" = "Gene_annot"))
+Combined_VAF_to_plot <- Combined_VAF_to_plot %>% left_join(RNA_mat_res, by = c("cell" = "cell", "Gene_annot" = "ID"))
+
+
+unique(Combined_VAF_to_plot$Genotype)
+#Filter out NA values - change later 
+
+#Combined_VAF_to_plot <- Combined_VAF_to_plot %>% filter(!is.na(Genotype))
+#Combined_VAF_to_plot$Genotype <- factor(Combined_VAF_to_plot$Genotype, levels = c(2, 1, 0, NA))
+
+
+
+
+#_________________________________________________________________________
+ #Plot again with levels set for figures
+
+out_put_dir <- "Plots_GATK/All_variants_expression_vs_VAF_significant_Genotype_discrete_figure_freq"
+plot_genes <- unique(DE_test_out_sig$ID_Geno)
+
+
 i=plot_genes[8]
 i=plot_genes[28]
 
@@ -1276,8 +2142,6 @@ avg <- Df_to_plot_i %>% group_by(Genotype) %>% summarize(avg = mean(Expression))
 
 #Do significant testing - all POU5F1 variants
 
-
-
 ```{r}
 
 #Load data
@@ -1292,6 +2156,12 @@ Geno_list <- cDNA_data_Seurat@assays$Geno_filtered@misc
 list2env(Geno_list, envir = .GlobalEnv)
 
 
+#__________
+#filter for POU5F1
+
+i = "POU5F1"
+Geno_meta_filter <- Geno_meta %>% left_join(variants_annot_filter, by = c("Amp_ID" = "Amp_ID"))
+Geno_meta_filter <- Geno_meta_filter %>% filter(Gene_annot == i)
 
 
 
@@ -1534,24 +2404,7 @@ max_lfc <- max(DE_test_out_sig$avg_log2FC)
 
 group_colors = c("TRUE" = "#5E1675")
 
-title = "Volcano_plot_DE_testing_all_genes_POU5F1.pdf"
-p <- DE_test_out %>%
-  ggplot(aes(x = avg_log2FC, y = -log10(p_val_adj), color = Significant, shape=Test)) +
-  scale_color_manual(values = group_colors)+
-  #facet_wrap(~target_type, ncol = 4) +
-  geom_point(size = 7) +
-  geom_hline(yintercept = -log10(0.05), linetype = "dashed") + 
-  geom_vline(xintercept = 0, linetype = "dashed") +
-  #scale_color_manual(values = c("control_PE" = "gray42", "SNP" = "purple", "TSS" = "firebrick3")) +
-  scale_x_continuous(limits = c(-max_lfc, max_lfc)) +
-  labs(title = title , y = "-log10(adj. p-value)") +
-  theme_classic()+
-      guides(fill = "none", color = "none")
 
-p
-
-ggsave(filename = title, path = "Plots_GATK" , plot = p, device = "pdf", scale = 1,
-       width = 15, height = 15, units = "cm", dpi = 300)
 
 
 title = "Volcano_plot_DE_testing_intended_genes_POU5F1.pdf"
@@ -1644,7 +2497,7 @@ p <- comb_counts %>%
 
 p
 
-ggsave(filename = title, path = here("Plots_GATK/POU5F1_Comb_plots"), plot = p, device = "pdf", scale = 1,
+ggsave(filename = title, path = "Plots_GATK/POU5F1_Comb_plots", plot = p, device = "pdf", scale = 1,
        width = 15, height = 15, units = "cm", dpi = 300)
 
 
@@ -1724,7 +2577,7 @@ DE_test_out <- bind_rows(DE_test_out)
 DE_test_out <- unique(DE_test_out)
 
 
-write.csv(DE_test_out, file = here("DE_test_out_POU5F1_comb.csv"), quote = FALSE, row.names = FALSE, col.names = TRUE)
+write.csv(DE_test_out, file = "DE_test_out_POU5F1_comb.csv", quote = FALSE, row.names = FALSE, col.names = TRUE)
 
 
 
@@ -1799,8 +2652,19 @@ pl2<- pl1  +
 
 pl2
 
-ggsave(filename = title, path = here("Plots_GATK/POU5F1_Comb_plots"), plot = pl2, device = "pdf", scale = 1,
+ggsave(filename = title, path = "Plots_GATK/POU5F1_Comb_plots", plot = pl2, device = "pdf", scale = 1,
        width = 18.2, height = 15, units = "cm", dpi = 300)
+
+
+
+
+
+#Save for source data
+
+
+
+
+
 
 
 
@@ -1873,8 +2737,20 @@ p <- pheatmap(split,
 
 
 
-ggsave(filename = title, path = here("Plots_GATK/POU5F1_Comb_plots"), plot = p, device = "pdf", scale = 1,
+ggsave(filename = title, path = "Plots_GATK/POU5F1_Comb_plots", plot = p, device = "pdf", scale = 1,
        width = 20, height = 15, units = "cm", dpi = 300)
+
+
+to_file <-  DE_test_out_int %>%
+dplyr::select(ID_Geno1, ID_Geno2, p_val_adj, avg_log2FC)
+
+legend_to_add <- paste(rev(colnames(subset_mat)), collapse = "|")
+
+to_file$ID_legend <- legend_to_add
+
+file_name = "Fig3_M_h_SDR006_Dot_plot_POU5F1_Combinations.csv"
+write.csv(to_file, paste0(file_save_dir, "/", file_name), row.names = FALSE) 
+
 
 
 
@@ -1895,15 +2771,18 @@ ggsave(filename = title, path = here("Plots_GATK/POU5F1_Comb_plots"), plot = p, 
 
 ```{r}
 
-
-
-#
-
+#Make annotation file 
+subset_mat <- Geno_mat[,to_filter]
+subset_mat <- na.omit(subset_mat)
+subset_mat$conc <- apply(subset_mat, 1, function(x) paste(x, collapse = " "))
 comb_counts <- table(subset_mat$conc) %>% as.data.frame() %>% arrange(desc(Freq))
 comb_counts <- comb_counts %>% filter(Freq >=25)
-
-
 colnames(comb_counts) <- c("conc", "Count")
+#
+
+
+
+
 
 
 RNA_mat <- cDNA_data_Seurat@assays$RNA$data %>% t() %>% as.data.frame() %>% exp() -1
@@ -1973,6 +2852,21 @@ ggsave(filename = title, path = "Plots_GATK/POU5F1_Comb_plots", plot = p, device
   p
 
   
+  to_file <-  subset_mat_mod %>%
+dplyr::select(ID_Geno = conc, cell, POU5F1)
+
+to_file$ID_legend <- legend_to_add
+
+file_name = "Fig3_S8_b_POU5F1_Violin_Gene_Expression.csv"
+write.csv(to_file, paste0(file_save_dir, "/", file_name), row.names = FALSE) 
+
+  
+  
+
+  
+  
+  
+  
 #Also make bargraph with same ordering for main plot
   
 
@@ -1991,169 +2885,12 @@ p <- comb_counts %>%
 
 p
 
-ggsave(filename = title, path = here("Plots_GATK/POU5F1_Comb_plots"), plot = p, device = "pdf", scale = 1,
+ggsave(filename = title, path = "Plots_GATK/POU5F1_Comb_plots", plot = p, device = "pdf", scale = 1,
        width = 15, height = 15, units = "cm", dpi = 300)
 
   
 
-to_filter  
-  
-  
 ```
-
-
-
-
-
-
-
-#Plot the combinations in a dotplot P-value and logFC  - Version 2
-
-
-```{r}
-
-
-DE_test_out <- read.csv("DE_test_out_POU5F1_comb.csv")
-
-
-
-
-DE_test_out$avg_log2FC <- DE_test_out$avg_log2FC*-1
-
-DE_test_out_int <- DE_test_out %>% filter(Gene == "POU5F1")
-
-DE_test_out_int <- DE_test_out_int %>% mutate(p_val_adj_mlog10 = -log10(p_val_adj))
-#DE_test_out_int <- DE_test_out_int %>% arrange(desc(p_val_adj_mlog10))
-DE_test_out_int <- DE_test_out_int %>% arrange(desc(avg_log2FC))
-
-
-to_order <- unique(DE_test_out_int$ID_Geno1)
-
-
-DE_test_out_int <- DE_test_out_int %>%
-  mutate(ID_Geno1 = factor(ID_Geno1, levels = to_order))
-
-
-DE_test_out_int <- DE_test_out_int %>%
-  mutate(ID_Geno2 = factor(ID_Geno2, levels = to_order))
-
-
-  
-title = "SDR006_Dot_plot_POU5F1_Combinations_V2.pdf"
-
-pl1 <-  DE_test_out_int %>%
-  ggplot(aes(y = ID_Geno1 ,  x = ID_Geno2)) + 
-  geom_tile(aes(fill = avg_log2FC)) +  
-    scale_fill_gradient2(low = "#990000", mid = "#F6F5F2", high = "#337357", limits = c(-0.7, 0.7)) +  
-    	theme(axis.text.x = element_text(angle = 90, vjust = 1, hjust=1)) +
-  	theme(plot.title = element_text(hjust=0.5, face="bold")) +
-  	ggtitle(title)
-
-pl1
-
-
-
-pl2<- pl1  +   
-  geom_point(aes(color=avg_log2FC)) +    
-  scale_colour_gradient2(low = "#990000", mid = "#F6F5F2", high = "#337357", limits = c(-0.7, 0.7)) +  
-  #scale_colour_gradient2(low = "#990000", mid = "grey", high = "#336600", midpoint = 0, limits = c(0,3))+     
-  #scale_size(breaks = c(0, 5, 10, 15, 20), range = c(0, 6), limits = c(0,17))+ 
-      	theme(axis.text.x = element_text(angle = 90, vjust = 1, hjust=1)) +
-  	theme(plot.title = element_text(hjust=0.5, face="bold")) +
-  	ggtitle(title)
-
-
-pl2
-
-ggsave(filename = title, path = "Plots_GATK/POU5F1_Comb_plots", plot = pl2, device = "pdf", scale = 1,
-       width = 18.2, height = 15, units = "cm", dpi = 300)
-
-
-
-#Make legend for this plot
-
-#to_order <- factor(DE_test_out_int$ID_Geno1, levels = unique(DE_test_out_int$ID_Geno1))
-
-legend <- DE_test_out_int %>% select(ID_Geno1) %>% mutate_all(as.character()) %>% unique()
-legend$ID_Geno1 <- as.character(legend$ID_Geno1)
-
-split <- strsplit(legend$ID_Geno1, "")
-split <- do.call(rbind, lapply(split, as.numeric)) %>% as.data.frame()
-
-split <- split[, seq(1, ncol(split), by = 2)]
-
-#Do with pheatmap packe 
-
-
-library(pheatmap)
-
-myColor <- c( "dodgerblue3", "cyan2", "forestgreen")
-
-#Make annotation file 
-subset_mat <- Geno_mat[,to_filter]
-subset_mat <- na.omit(subset_mat)
-
-#Set colnames
-colnames(split) <- colnames(subset_mat)
-
-
-
-samples <- data.frame(Group = colnames(split))
-samples_split <- strsplit(samples$Group, "-") %>% 
-  lapply(function(x) { as.data.frame(matrix(x, ncol = length(x), byrow = TRUE)) }) %>%
-  do.call(rbind, .) %>% 
-  setNames(paste0("Part", seq_len(ncol(.))))
-
-
-#Split again
-samples_split_again <- strsplit(samples_split$Part6, "\\.") %>% 
-  lapply(function(x) x[1]) %>%  # Extract only the first part of each split
-  unlist() %>%  # Convert the list to a vector
-  as.data.frame()  # Convert the vector to a dataframe
-
-rownames(samples_split_again) <- colnames(split)
-
-
-                      
-                      
-
-title = "SDR006_Dot_plot_POU5F1_Combinations_legend.pdf"
-p <- pheatmap(split,
-         #color = inferno(255),
-         #color = brewer.pal(11, "RdBu"),
-         color = myColor,
-         #scale = "row",
-         cluster_cols = FALSE,
-         cluster_rows = FALSE,
-         border_color = NA,
-         show_colnames = TRUE,
-         show_rownames = TRUE,
-         drop_levels = TRUE,
-         annotation_col = samples_split_again ,
-         #annotation_colors = mat_colors,
-         #cutree_cols = 3,
-         #cutree_rows = 2
-         #breaks = myBreaks,
-         main = "qPCR_Science_delta_to_TBP"
-)
-
-
-
-ggsave(filename = title, path = here("Plots_GATK/POU5F1_Comb_plots"), plot = p, device = "pdf", scale = 1,
-       width = 20, height = 15, units = "cm", dpi = 300)
-
-
-
-
-
-
-
-```
-
-
-
-
-
 
 
 

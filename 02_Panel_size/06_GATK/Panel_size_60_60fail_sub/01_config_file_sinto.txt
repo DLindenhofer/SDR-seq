@@ -1,0 +1,3 @@
+Batch_1	/g/steinmetz/projects/SDR_Shared_John_Dominik/SDR002/20240918_GATK_Subset/SDR002_60_60fail_sub/01_Input_cells_txt/Batch_1.txt
+Batch_2	/g/steinmetz/projects/SDR_Shared_John_Dominik/SDR002/20240918_GATK_Subset/SDR002_60_60fail_sub/01_Input_cells_txt/Batch_2.txt
+Batch_3	/g/steinmetz/projects/SDR_Shared_John_Dominik/SDR002/20240918_GATK_Subset/SDR002_60_60fail_sub/01_Input_cells_txt/Batch_3.txt

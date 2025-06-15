@@ -1,0 +1,108 @@
+---
+title: "20231117_SDR005_get_ref_seqs_for_STAR"
+author: "Dominik Lindenhofer"
+date: "2023-11-17"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+## Load libs
+
+
+```{r}
+
+
+library(BSgenome)
+library(Biostrings)
+library(dplyr)
+
+library(GenomicRanges)
+
+
+```
+
+
+#For mouse
+
+
+
+
+
+```{r}
+
+#Get seqs for V3 gDNA reference 
+
+
+#get sequences for gDNA targets
+SDR009_gDNA_amplicons <- read.csv("Input/8493-design-summary.csv") %>% dplyr::select(Chromosome = "chr", Start = "amplicon_start", End = "amplicon_end", ID = "AmpID")
+
+
+```
+
+
+
+
+```{r}
+# human genome BSgenome object (needs to be istalled from Bioconductor)
+mm10 <- getBSgenome("BSgenome.Mmusculus.UCSC.mm10")
+
+#get sequences for gDNA targets
+SDR009_gDNA_amplicons <- read.csv("Input/8493-design-summary.csv") %>% dplyr::select(Chromosome = "chr", Start = "amplicon_start", End = "amplicon_end", ID = "AmpID")
+
+
+gDNA_targets <- SDR009_gDNA_amplicons
+
+
+
+#Add 500 bp at each side 
+#gDNA_targets$Start <- gDNA_targets$Start-500
+#gDNA_targets$End <- gDNA_targets$End+500
+
+gDNA_targets_seq <- data.frame()
+
+for (i in unique(gDNA_targets$ID)){
+  gDNA_targets_i <- gDNA_targets %>% dplyr::filter(gDNA_targets$ID == i)
+  gDNA_targets_dna_i <- as.character(Biostrings::getSeq(mm10, gDNA_targets_i$Chromosome, gDNA_targets_i$Start,	gDNA_targets_i$End))
+  gDNA_targets_dna_i_df <- data.frame(ID = i, Chromosome = gDNA_targets_i$Chromosome, Start = gDNA_targets_i$Start, End = gDNA_targets_i$End,  Sequence = gDNA_targets_dna_i)
+  gDNA_targets_seq <- rbind(gDNA_targets_seq, gDNA_targets_dna_i_df)
+}
+
+
+write.csv(gDNA_targets_seq, file = "./Input/07_Species_Mix_gDNA_targets_mouse.csv", quote = FALSE, row.names = FALSE, col.names = TRUE)
+
+
+```
+
+
+#Combine with human 
+
+```{r}
+
+gDNA_targets_seq_H <- read.csv("Input/POP_gDNA_REF.csv")
+
+gDNA_targets_seq_M <- read.csv("Input/07_Species_Mix_gDNA_targets_mouse.csv")
+
+
+gDNA_targets_seq_H$ID <- paste0(gDNA_targets_seq_H$ID, "_Human")
+
+gDNA_targets_seq_M$ID <- paste0(gDNA_targets_seq_M$ID, "_Mouse")
+
+
+#Combine
+
+gDNA_targets_seq <- rbind(gDNA_targets_seq_H, gDNA_targets_seq_M)
+
+#Subset columns needed 
+
+gDNA_targets_seq <- gDNA_targets_seq %>% dplyr::select(ID, Sequence)
+
+write.csv(gDNA_targets_seq, file = "Input/07_Species_Mix_gDNA_targets_comb.csv", quote = FALSE, row.names = FALSE, col.names = TRUE)
+
+
+
+
+```
+

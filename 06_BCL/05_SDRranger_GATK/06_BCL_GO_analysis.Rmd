@@ -1,0 +1,908 @@
+---
+title: "20240530_SDR005_GO_analysis-V2"
+output: html_document
+date: "2024-05-30"
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+
+
+#Load libraries
+
+
+```{r, fig.width = 6, fig.height = 10}
+
+library(Seurat)
+library(dplyr)
+library(ggplot2)
+library(Matrix)
+library(reshape2)
+library(data.table)
+library(stringr)
+library(tidyr)
+library(scales)
+library(rtracklayer)
+library(data.table)
+library(readr)
+library(pheatmap)
+library(RColorBrewer)
+library(topGO)
+library(org.Hs.eg.db)
+library(purrr)
+
+
+
+file_save_dir <- "/Users/dominik.lindenhofer/ownCloud/Shared_project_folder/Paper_drafts/2022_SDR_Paper/Source_data/Individual_files_all"
+
+
+```
+
+
+
+
+#load data 
+
+
+
+#Load in variants for which to filter for from Chi-square testing LZ -DZ
+
+```{r, fig.width = 6, fig.height = 10}
+
+cDNA_data_Seurat <- readRDS("SDR005_Combined_Geno_full_clustered.rds")
+
+
+Chi_FL7_one <- read.csv("SDR005_Stat_testing/Chi_FL7_Cell_Types_all.csv") %>% dplyr::select(-X) %>% mutate(sample = "FL7")
+Chi_FL11_one <- read.csv("SDR005_Stat_testing/Chi_FL11_Cell_Types_all.csv") %>% dplyr::select(-X) %>% mutate(sample = "FL11")
+Chi_GCB4_one <- read.csv("SDR005_Stat_testing/Chi_GCB4_Cell_Types_all.csv")  %>% dplyr::select(-X) %>% mutate(sample = "GCB4")
+
+
+Chi_comb_one <- rbind(Chi_FL7_one, Chi_FL11_one, Chi_GCB4_one)
+
+
+#Remove WT - WT 1 ones - filter for DZ and LZ 
+
+Chi_comb_one <- Chi_comb_one %>% 
+  filter(State1 == "DZ" & State2 == "LZ") %>%
+  filter(!(State1_0_perc == 1 & State2_0_perc == 1)) %>%
+  mutate(across(everything(), ~ifelse(is.na(.), 0, .)))
+
+#set_cut_off for number of to filter out low variants 
+
+
+#Add info
+Chi_comb_one <- Chi_comb_one  %>% 
+  mutate(State1_edit_count = State1_1_count + State1_2_count,
+         State2_edit_count = State2_1_count + State2_2_count,
+         State1_edit_perc = State1_1_perc + State1_2_perc,
+         State2_edit_perc = State2_1_perc + State2_2_perc,) %>%
+  mutate(edit_count_tot = State1_edit_count + State2_edit_count) %>%
+  mutate(Significant = if_else(P_val_adj < 0.05, TRUE, FALSE))
+
+#Apply cutoff for variants
+
+cut_off = 30
+Chi_comb_one <- Chi_comb_one  %>% filter(edit_count_tot > cut_off)
+
+cut_off = 0.05
+Chi_comb_one <- Chi_comb_one  %>% filter(State1_edit_perc > cut_off |
+                                         State2_edit_perc > cut_off )
+
+
+#Add delta Chi
+
+Chi_comb_one <- Chi_comb_one %>% mutate(delta_0_perc = State1_0_perc - State2_0_perc,
+                                        delta_1_perc = State1_1_perc - State2_1_perc,
+                                        delta_2_perc = State1_2_perc - State2_2_perc)
+
+
+
+#Add Gene ID
+
+Geno_meta <- cDNA_data_Seurat@assays$Geno_filtered@meta.data
+to_add <- Geno_meta %>% dplyr::select(ID_Geno, Gene_annot, Consequence)
+Chi_comb_one <- Chi_comb_one %>% left_join(to_add, by = c("Variant" = "ID_Geno" ))
+
+#Add to highlight
+
+Chi_comb_one  <- Chi_comb_one %>% mutate(target_to_plot_0 = case_when(Significant == TRUE & delta_0_perc > 0 ~ State1,
+                                                                      Significant == TRUE & delta_0_perc < 0 ~ State2))
+
+
+Chi_comb_one  <- Chi_comb_one %>% mutate(target_to_plot_1 = case_when(Significant == TRUE & delta_1_perc > 0 ~ State1,
+                                                                      Significant == TRUE & delta_1_perc < 0 ~ State2))
+
+
+Chi_comb_one  <- Chi_comb_one %>% mutate(target_to_plot_2 = case_when(Significant == TRUE & delta_2_perc > 0 ~ State1,
+                                                                      Significant == TRUE & delta_2_perc < 0 ~ State2))
+
+
+to_order <- c("FL7", "FL11", "GCB4")
+
+Chi_comb_one$sample <- factor(Chi_comb_one$sample, levels = to_order)
+
+
+#Exclude IG variants
+
+Chi_comb_one_wo_IG <- Chi_comb_one %>% mutate(Gene_annot = if_else(str_detect(Gene_annot, "^IG"), NA_character_, Gene_annot)) %>%   filter(!is.na(Gene_annot))
+
+
+#Select significant
+#All
+Chi_comb_one_sel <- Chi_comb_one %>% filter(Significant == TRUE)
+
+#no IG included
+Chi_comb_one_wo_IG_sel <- Chi_comb_one_wo_IG %>% filter(Significant == TRUE)
+
+
+```
+
+
+
+
+#Include IG variants in this analysis 
+
+#Laod DE output - all variants
+#Subset for only CHI-DE ones from above
+
+
+```{r, fig.width = 6, fig.height = 10}
+
+
+#_________________________________________________________________________
+
+#Load data
+#cDNA_data_Seurat <- readRDS("SDR005_Combined_Geno_full_clustered.rds")
+
+metadata <- cDNA_data_Seurat@meta.data
+
+
+#Get all matrices
+RNA_mat <- cDNA_data_Seurat@assays$RNA$data %>% t() %>% as.data.frame() %>% exp() -1
+GT_mat <- cDNA_data_Seurat@assays$Geno_filtered$counts %>% as.data.frame()
+Geno_meta <- cDNA_data_Seurat@assays$Geno_filtered@meta.data
+
+Geno_list <- cDNA_data_Seurat@assays$Geno_filtered@misc
+list2env(Geno_list, envir = .GlobalEnv)
+
+
+
+#Load - all variants 
+
+DE_test_comb <- read.csv("SDR005_Stat_testing_MAST/SDR005_DE_test_out_DZ_LZ_comb.csv")
+
+#Fix gene names
+DE_test_comb <- DE_test_comb %>% mutate(Gene = gsub("IGLC1-IGLL5", "IGLL5", Gene))
+
+
+#Subset for variants in Chi_comb_one_sel
+
+to_filter <- unique(Chi_comb_one_sel$Variant)
+
+DE_test_comb <- DE_test_comb %>% filter(ID_Geno %in% to_filter)
+
+
+#Select significant ones
+DE_test_comb_sel <- DE_test_comb %>% filter(p_val_adj < 0.05,  
+                                                        pct.1 > 0.25 & pct.2 > 0.25)
+#Check most frequent effects
+sum <- DE_test_comb_sel  %>% group_by(Sample, State, Gene) %>% summarise(count = n())
+sum2 <- DE_test_comb_sel %>% group_by(Sample, Gene) %>% summarise(count = n())
+sum3 <- DE_test_comb_sel %>% group_by(Gene_annot, Gene) %>% summarise(count = n())
+sum4 <- DE_test_comb_sel %>% group_by(Sample, ID_Geno) %>% summarise(count = n())
+sum5 <- DE_test_comb_sel %>% group_by(Sample, State, Gene, Gene_annot) %>% summarise(count = n())
+
+
+
+#filter out IG genes
+DE_test_comb_wo_IG <- DE_test_comb %>% mutate(Gene_annot = if_else(str_detect(Gene_annot, "^IG"), NA_character_, Gene_annot)) %>%   filter(!is.na(Gene_annot))
+  
+  
+
+DE_test_comb_wo_IG_sel <- DE_test_comb_wo_IG %>% filter(p_val_adj < 0.05,  
+                                                        pct.1 > 0.25 & pct.2 > 0.25)
+
+
+
+  
+```
+
+
+
+
+#Make summarized count plots - all variants that are Chi-DE between samples - cut 50
+
+
+
+```{r, fig.width = 10, fig.height = 6}
+
+#to_filter <- c("BCL2", "HIST1H1D", "DTX1", "HIST1HE", "BCL6", "TNFRSF14")
+group_colors_samples <- c("FL7" = "#FC6736", FL11 = "#FFB0B0", GCB4 = "#0C2D57")
+
+to_filter_count <- DE_test_comb_sel %>% group_by(Sample, Gene) %>% summarise(count = n())
+
+
+
+to_filter_count <- DE_test_comb_sel %>% group_by(Gene) %>% summarise(count = n()) %>% filter(count > 26)
+
+sum5 <- DE_test_comb_sel %>% group_by(Sample, Gene) %>% summarise(count = n()) %>% filter(Gene %in% to_filter_count$Gene)
+
+sum5$Gene
+
+# Filter the sum5 dataframe to include only the genes of interest
+sum5_sel <- sum5 
+write.csv(sum5_sel, "Genes_to_filter.csv")
+
+
+#sum5_sel <- sum5
+
+# Define the desired order of the samples
+to_order_sample <- c("FL7", "FL11", "GCB4")
+
+# Summarize the count of each gene and arrange in descending order
+to_order_gene <- sum5_sel %>%
+  group_by(Gene) %>%
+  summarize(count = sum(count)) %>%
+  arrange(desc(count))
+
+# Convert the Gene column to a factor to control the order
+to_order_gene$Gene <- as.factor(to_order_gene$Gene)
+
+# Reorder the Sample column in sum5_sel according to to_order_sample
+sum5_sel$Sample <- factor(sum5_sel$Sample, levels = to_order_sample)
+
+# Reorder the Gene column in sum5_sel according to to_order_gene
+sum5_sel$Gene <- factor(sum5_sel$Gene, levels = to_order_gene$Gene)
+
+  
+title = "Gene_effect_count_all_variants.pdf"
+p <- sum5_sel %>% 
+    ggplot(aes(x = Gene, y = count, fill = Sample)) + 
+      geom_bar(position = "stack", stat = "identity") + 
+    	theme_classic() +
+  	theme(axis.text.x = element_text(angle = 90, vjust = 1, hjust=1)) +
+  #theme(plot.title = element_text(hjust=0.5, face="bold")) +
+  	ggtitle(title)+
+        scale_fill_manual(values = group_colors_samples)+
+    guides(fill = FALSE)
+
+p
+
+ggsave(filename = title, path = "SDR005_Stat_testing_GO", plot = p, device = "pdf", scale = 1,
+       width = 30, height = 15, units = "cm", dpi = 300)
+
+
+
+to_file <- sum5_sel 
+to_file <- to_file %>% mutate(Sample = case_when(Sample == "FL7" ~ "FL1",
+                                                 Sample == "FL11" ~ "FL2",
+                                                 Sample == "GCB4" ~ "GCB1"))
+
+
+file_name = "Fig4_S9_e_Gene_effect_count_all_variants.csv"
+write.csv(to_file, paste0(file_save_dir, "/", file_name), row.names = FALSE) 
+
+
+
+
+```
+
+
+
+
+
+
+#Make dotplot of expression - top DE genes 
+
+
+```{r}
+
+#Check RNA_mat
+rowSums(RNA_mat)
+
+to_add <- metadata %>% dplyr::select(cell_merge, Tumor_ID, CellTypes)
+
+RNA_mat_mod <- RNA_mat %>% mutate(cell = rownames(RNA_mat))
+                                                  
+RNA_mat_mod_res <- RNA_mat_mod %>% left_join(to_add, by = c("cell" = "cell_merge")) %>% reshape2::melt()
+
+colnames(RNA_mat_mod_res) <- c("cell", "Tumor_ID", "State", "ID", "nUMIs")
+
+nCells_Exp <- metadata %>% group_by(Tumor_ID, CellTypes) %>% summarise(nCells = n_distinct(cell_merge))
+
+#Make average expression and fraction of cells detected per gene - wo normalization 
+
+RNA_mat_mod_res_expr_all <- RNA_mat_mod_res %>% 
+  dplyr::group_by(ID, Tumor_ID, State) %>% 
+  dplyr::summarize(avg_nUMIs = mean(nUMIs),
+                   n_cells = sum(nUMIs > 0), 
+                   .groups = "drop") %>% 
+    dplyr::left_join(nCells_Exp, by = c("Tumor_ID", "State" = "CellTypes" )) %>%
+dplyr::mutate(avg_nUMIs_log1p = log1p(avg_nUMIs),
+                frac_cells = n_cells/nCells)
+
+
+#Set filter for genes - from barplot above
+
+to_filter_count <- DE_test_comb_sel %>% group_by(Gene) %>% summarise(count = n()) %>% filter(count > 30)
+
+sum5 <- DE_test_comb_sel %>% group_by(Sample, Gene) %>% summarise(count = n()) %>% filter(Gene %in% to_filter_count$Gene)
+sum5_sel <- sum5 
+genes_to_filter <- unique(sum5_sel$Gene)
+length(genes_to_filter)
+
+
+
+RNA_mat_mod_res_expr_all_filter <- RNA_mat_mod_res_expr_all %>% filter(ID %in% genes_to_filter &
+                                                                       State %in% c("DZ", "LZ"))
+
+length(unique(RNA_mat_mod_res_expr_all_filter$ID))
+#RNA_mat_mod_res_expr_all_filter$ID <- factor(RNA_mat_mod_res_expr_all_filter$ID, levels = levels(genes_to_filter))
+
+
+
+#Make unique column for plotting
+
+RNA_mat_mod_res_expr_all_filter <- RNA_mat_mod_res_expr_all_filter %>% mutate(sample_State = str_c(Tumor_ID, State, sep = "_"))
+
+#Set order for plotting
+
+to_order <- c("FL7_DZ", "FL7_LZ", "FL11_DZ", "FL11_LZ", "GCB4_DZ", "GCB4_LZ")
+
+RNA_mat_mod_res_expr_all_filter$sample_State <- factor(RNA_mat_mod_res_expr_all_filter$sample_State, levels =  to_order )
+
+max_plot <- max(RNA_mat_mod_res_expr_all_filter$avg_nUMIs_log1p)
+
+
+
+pl1 <-  RNA_mat_mod_res_expr_all_filter  %>%
+  ggplot(aes(y = ID,  x = factor(sample_State))) + 
+  geom_tile(aes(fill = avg_nUMIs_log1p)) +  
+  scale_fill_continuous(low = "white", high = "white")
+
+pl1
+
+
+
+pl2<- pl1  +   
+  geom_point(aes(color=avg_nUMIs_log1p, size = frac_cells)) +    
+  scale_colour_gradient(low = "grey", high = "#990000", limits = c(0,max_plot)) +  
+  #scale_colour_gradient2(low = "#990000", mid = "grey", high = "#336600", midpoint = 0, limits = c(0,3))+     
+  scale_size(breaks = c(0, 0.25, 0.5, 0.75, 1), range = c(0, 4), limits= c(0,1))+ 
+  # scale_size(breaks = c(0.5, 0.75, 1), range = c(0, 10), limits= c(0,1))+ 
+  theme_bw()
+
+pl2
+
+
+ggsave(filename = "Dotplot_top_DE_genes_for_figure.pdf", path = "SDR005_Stat_testing_GO", plot = pl2, device = "pdf", scale = 1,width = 15, height = 40, units = "cm", dpi = 300)
+
+```
+
+
+
+
+#Make heatmap of the plot above
+
+
+```{r}
+
+
+
+to_plot_FL7_DZ <- RNA_mat_mod_res_expr_all_filter %>% filter(sample_State == "FL7_DZ")
+to_plot_FL7_LZ <- RNA_mat_mod_res_expr_all_filter %>% filter(sample_State == "FL7_LZ")
+to_plot_FL11_DZ <- RNA_mat_mod_res_expr_all_filter %>% filter(sample_State == "FL11_DZ")
+to_plot_FL11_LZ <- RNA_mat_mod_res_expr_all_filter %>% filter(sample_State == "FL11_LZ")
+to_plot_GCB4_DZ <- RNA_mat_mod_res_expr_all_filter %>% filter(sample_State == "GCB4_DZ")
+to_plot_GCB4_LZ <- RNA_mat_mod_res_expr_all_filter %>% filter(sample_State == "GCB4_LZ")
+
+
+to_plot <- data.frame(FL7_DZ = to_plot_FL7_DZ$avg_nUMIs, FL7_LZ = to_plot_FL7_LZ$avg_nUMIs,
+                      FL11_DZ = to_plot_FL11_DZ$avg_nUMIs, FL11_LZ = to_plot_FL11_LZ$avg_nUMIs,
+                      GCB4_DZ = to_plot_GCB4_DZ$avg_nUMIs, GCB4_LZ = to_plot_GCB4_LZ$avg_nUMIs)
+
+
+
+rownames(to_plot) <- to_plot_FL7_DZ$ID
+
+
+
+
+
+#_________________________________________________________________________
+
+#Plot heatmap
+
+#Set Breaks for dataset
+myBreaks = seq(-2, 2, by = 0.1)
+#breaksList <- seq(min(RNA_seq_iPSCs), max(RNA_seq_iPSCs), length.out = 50)
+
+#Set colors for dataset
+#myColor <- colorRampPalette(rev(brewer.pal(n = 7, name = "RdBu")))(length(breaksList))
+myColor = colorRampPalette(c("#F6F5F2", "yellow3", "#337357"))(length(myBreaks))
+
+
+title = "Heatmap_top_DE_genes_for_figure.pdf"
+p <- pheatmap(to_plot,
+         #color = inferno(255),
+         #color = brewer.pal(11, "RdBu"),
+        color = myColor,
+         scale = "row",
+         #scale = "none",
+         cluster_cols = FALSE,
+         cluster_rows = TRUE,
+         border_color = NA,
+         show_colnames = TRUE,
+         show_rownames = TRUE,
+         drop_levels = TRUE,
+         #annotation_row = mat_row,
+         #annotation_col = mat_col,
+         #annotation_colors = group_colors_heatmap ,
+         #cutree_cols = 3,
+         #cutree_rows = 2
+         breaks = myBreaks,
+         main = title
+)
+
+
+ggsave(filename = title, path = "SDR005_Stat_testing_GO", plot = p, device = "pdf", scale = 1,
+       width = 15, height = 15, units = "cm", dpi = 300)
+
+p
+
+
+
+
+to_file <- to_plot %>% mutate(Gene= rownames(to_plot))
+
+file_name = "Fig4_M_g_Heatmap_top_DE_genes_for_figure.csv"
+write.csv(to_file, paste0(file_save_dir, "/", file_name), row.names = FALSE) 
+
+
+
+```
+
+
+
+#Make heatmap with all genes LZ/DZ to check general expression of genes in those states
+
+
+```{r}
+
+
+#Prepare RNA_mat and add cell column for filtering 
+
+rowSums(RNA_mat)
+
+to_add <- metadata %>% dplyr::select(cell_merge, Tumor_ID, CellTypes)
+
+RNA_mat_mod <- RNA_mat %>% mutate(cell = rownames(RNA_mat))
+                                                  
+RNA_mat_mod_res <- RNA_mat_mod %>% left_join(to_add, by = c("cell" = "cell_merge")) %>% reshape2::melt()
+
+colnames(RNA_mat_mod_res) <- c("cell", "Tumor_ID", "State", "ID", "nUMIs")
+
+nCells_Exp <- metadata %>% group_by(Tumor_ID, CellTypes) %>% summarise(nCells = n_distinct(cell_merge))
+
+#Make average expression and fraction of cells detected per gene - wo normalization 
+
+RNA_mat_mod_res_expr_all <- RNA_mat_mod_res %>% 
+  dplyr::group_by(ID, Tumor_ID, State) %>% 
+  dplyr::summarize(avg_nUMIs = mean(nUMIs),
+                   n_cells = sum(nUMIs > 0), 
+                   .groups = "drop") %>% 
+    dplyr::left_join(nCells_Exp, by = c("Tumor_ID", "State" = "CellTypes" )) %>%
+dplyr::mutate(avg_nUMIs_log1p = log1p(avg_nUMIs),
+                frac_cells = n_cells/nCells)
+
+
+RNA_mat_mod_res_expr_all_filter <- RNA_mat_mod_res_expr_all %>% filter(State %in% c("DZ", "LZ"))
+                                                                       
+
+
+
+
+
+#Make unique column for plotting
+
+RNA_mat_mod_res_expr_all_filter <- RNA_mat_mod_res_expr_all_filter %>% mutate(sample_State = str_c(Tumor_ID, State, sep = "_"))
+
+#Set order for plotting
+
+to_order <- c("FL7_DZ", "FL7_LZ", "FL11_DZ", "FL11_LZ", "GCB4_DZ", "GCB4_LZ")
+
+RNA_mat_mod_res_expr_all_filter$sample_State <- factor(RNA_mat_mod_res_expr_all_filter$sample_State, levels =  to_order )
+
+max_plot <- max(RNA_mat_mod_res_expr_all_filter$avg_nUMIs_log1p)
+
+
+
+RNA_mat_mod_res_expr_all_filter <- RNA_mat_mod_res_expr_all_filter %>% dplyr::select(sample_State, ID, avg_nUMIs)
+
+#Reshape
+
+
+RNA_mat_mod_res_expr_all_filter_wide <- RNA_mat_mod_res_expr_all_filter %>% pivot_wider(names_from = ID, values_from = avg_nUMIs) %>% ungroup() %>% as.data.frame()
+
+rownames(RNA_mat_mod_res_expr_all_filter_wide) <- RNA_mat_mod_res_expr_all_filter_wide$sample_State
+
+
+RNA_mat_mod_res_expr_all_filter_wide <- RNA_mat_mod_res_expr_all_filter_wide  %>% dplyr::select(-sample_State)
+
+#Remove columns with all 0
+to_remove <- colSums(RNA_mat_mod_res_expr_all_filter_wide) %>% as.data.frame()
+to_remove <- to_remove %>% filter(. != 0)
+
+RNA_mat_mod_res_expr_all_filter_wide <- RNA_mat_mod_res_expr_all_filter_wide[, rownames(to_remove)]
+
+
+
+
+to_plot <- RNA_mat_mod_res_expr_all_filter_wide
+
+#_________________________________________________________________________
+
+#Plot heatmap
+
+#Set Breaks for dataset
+myBreaks = seq(-2, 2, by = 0.1)
+#breaksList <- seq(min(RNA_seq_iPSCs), max(RNA_seq_iPSCs), length.out = 50)
+
+#Set colors for dataset
+#myColor <- colorRampPalette(rev(brewer.pal(n = 7, name = "RdBu")))(length(breaksList))
+myColor = colorRampPalette(c("#F6F5F2", "yellow3", "#337357"))(length(myBreaks))
+
+
+title = "Heatmap_all_genes_LZ_DZ.pdf"
+p <- pheatmap(to_plot,
+         #color = inferno(255),
+         #color = brewer.pal(11, "RdBu"),
+        color = myColor,
+         scale = "column",
+         #scale = "none",
+         #cluster_cols = TRUE,
+         cluster_rows = FALSE,
+         border_color = NA,
+         show_colnames = TRUE,
+         show_rownames = TRUE,
+         drop_levels = TRUE,
+         #annotation_row = mat_row,
+         #annotation_col = mat_col,
+         #annotation_colors = group_colors_heatmap ,
+         cutree_cols = 5,
+         #cutree_rows = 2
+         breaks = myBreaks,
+         main = title
+)
+
+
+ggsave(filename = title, path = "SDR005_Stat_testing_GO", plot = p, device = "pdf", scale = 1,
+       width = 100, height = 15, units = "cm", dpi = 300)
+
+p
+
+
+
+```
+
+
+
+#Make GO term analysis of TOP DE genes in all samples
+
+
+```{r}
+
+
+data(geneList)
+sum(topDiffGenes(geneList))
+
+#All combined - only top ones 
+
+all.genes <- unique(DE_test_comb$Gene)
+
+#Subset DE genes - take from subset above 
+
+#to_filter <- c("BCL2", "HIST1H1D", "DTX1", "HIST1HE", "BCL6", "TNFRSF14")
+to_filter_count <- DE_test_comb_sel %>% group_by(Gene) %>% summarise(count = n())
+
+
+
+#Define missing ones 
+
+missing.genes <- setdiff(all.genes, to_filter_count$Gene)
+
+df_missing.genes <- data.frame(Gene = missing.genes) %>% mutate(count = 0)
+
+
+combined_df <- rbind(to_filter_count, df_missing.genes)
+
+p_values <- combined_df %>% dplyr::select(count) %>% pull(1)
+genes <- combined_df %>% dplyr::select(Gene) %>% pull(1)
+names(p_values) <- genes
+
+
+# Function to map gene symbols to Entrez IDs
+getEntrezIDs <- function(symbols) {
+  suppressWarnings(AnnotationDbi::select(org.Hs.eg.db, keys = symbols, columns = "ENTREZID", keytype = "SYMBOL"))
+}
+
+#Get EntrezID numbers
+mappedGenes <- getEntrezIDs(genes)
+mappedGenes <- mappedGenes[!is.na(mappedGenes$ENTREZID),]
+mappedGenes$ENTREZID <- as.character(mappedGenes$ENTREZID)  
+
+#Prepare GO data
+#genes_list <- mappedGenes$ENTREZID
+#geneID2GO <- annFUN.org(whichOnto = "BP", feasibleGenes = mappedGenes$ENTREZID, mapping = "org.Hs.eg.db", ID = "entrez")  # for Biological Process
+#geneID2GO <- annFUN.gene2GO(whichOnto = "BP", feasibleGenes = mappedGenes$ENTREZID, gene2GO = geneID2GO)  # for Biological Process
+
+
+# Filtering function to select significant genes
+geneSelectionFun <- function(pvalue) {
+  return(pvalue > 26)
+}
+
+#BP
+GOdata <- new("topGOdata",
+              ontology = "BP",
+              allGenes = p_values,
+              geneSel = geneSelectionFun,
+              nodeSize = 10,
+              annot = annFUN.org, 
+              mapping = "org.Hs.eg.db",
+              ID = "symbol") 
+
+
+genes(GOdata)
+numGenes(GOdata)
+sigGenes(GOdata)
+numSigGenes(GOdata)
+
+#Run tests
+
+# Running the enrichment test using the 'weight01' algorithm with Fisher's exact test
+resultWeight01Fisher <- runTest(GOdata, algorithm = "weight01", statistic = "fisher")
+resultClassicFisher <- runTest(GOdata, algorithm = "classic", statistic = "fisher")
+resultWeight01KS <- runTest(GOdata, algorithm = "weight01", statistic = "ks")
+resultClassicKS <- runTest(GOdata, algorithm = "classic", statistic = "ks")
+
+
+
+# Summarizing the results
+resultsTable <- GenTable(GOdata,
+                         Weight01Fisher = resultWeight01Fisher,
+                         ClassicFisher = resultClassicFisher,
+                         Weight01KS = resultWeight01KS,
+                         ClassicKS = resultClassicKS, 
+                         orderBy = "Weight01Fisher",  # Order results by the weight01 Fisher test
+                         ranksOf = "ClassicFisher",
+                         topNodes = 30)  # Get the top 10 significant nodes/terms
+
+
+pvalWeight <- score(resultWeight01Fisher)
+hist(pvalWeight, 50, xlab = "p-values")
+pvalClassic <- score(resultClassicFisher)
+hist(pvalClassic, 50, xlab = "p-values")
+cor(pvalWeight, pvalClassic)
+geneData(resultWeight01Fisher)
+
+genes_in_term <- genesInTerm(GOdata)[["GO:0050853"]]
+
+#Plot GO term
+
+resultsTable$Weight01Fisher <- as.numeric(resultsTable$Weight01Fisher)
+
+resultsTable <- resultsTable[c(1:10),]
+
+resultsTable$Term <- factor(resultsTable$Term, levels = resultsTable$Term )
+
+
+
+title = "GO_BP_filtered_variants.pdf"
+p <- resultsTable %>% 
+    ggplot(aes(x = Term, y = -log10(Weight01Fisher))) + 
+      geom_bar(stat = "identity") + 
+    	theme_classic() +
+  	theme(axis.text.x = element_text(angle = 90, vjust = 1, hjust=1)) +
+  #theme(plot.title = element_text(hjust=0.5, face="bold")) +
+  	ggtitle(title)+
+        #scale_fill_manual(values = group_colors_samples)+
+    guides(fill = FALSE)
+
+p
+
+ggsave(filename = title, path = "SDR005_Stat_testing_GO", plot = p, device = "pdf", scale = 1,
+       width = 15, height = 15, units = "cm", dpi = 300)
+
+
+
+to_file <- resultsTable %>% dplyr::select(GO.ID, Term, P_val = Weight01Fisher)
+
+file_name = "Fig4_M_h_GO_BP_filtered_variants.csv"
+write.csv(to_file, paste0(file_save_dir, "/", file_name), row.names = FALSE) 
+
+
+
+```
+
+
+
+#Subset cells with more and less variants per cell - nCells edit 
+
+
+```{r}
+
+plot_save_dir <- "/Users/dominik.lindenhofer/Documents/Data_Local/Shared_Donnacha_SDR005!/SDR005_data_share/20240205_SDR005_SDRranger_gDNA-V4_cDNA-V5/SDR005_Stat_testing_GO/01_HIGH_LOW"
+
+
+#Load data
+cDNA_data_Seurat_DZ_LZ_split <- readRDS("SDR005_Combined_Geno_full_clustered_Gclustered_DZ_LZ_sub_split.rds")
+
+#__________________________
+
+#Make loop
+
+i = "FL7"
+x = "ACTB"
+
+Gene = "BLK"
+
+#Genes <- sum5_sel$Gene
+
+Genes <- genes_in_term 
+
+count_GT_list <- list()
+to_plot_list_list <- list()
+
+for (i in names(cDNA_data_Seurat_DZ_LZ_split)) {
+metadata_i <- cDNA_data_Seurat_DZ_LZ_split[[i]]@meta.data
+
+GT_mat_i <- cDNA_data_Seurat_DZ_LZ_split[[i]]@assays$Geno_filtered$counts %>% as.data.frame()
+RNA_mat_i <- cDNA_data_Seurat_DZ_LZ_split[[i]]@assays$RNA$data %>% t() %>% as.data.frame() %>% exp() -1
+
+
+#cells DZ and LZ
+
+cells_DZ <- metadata_i %>% filter(CellTypes == "DZ") %>% pull(cell_merge)
+cells_LZ <- metadata_i %>% filter(CellTypes == "LZ") %>% pull(cell_merge)
+
+
+#Count variants per cell
+count_GT_i <- GT_mat_i  %>%
+  apply(2, function(x) table(factor(x, levels = c("0", "1", "2")))) %>%
+  t() %>%
+  as.data.frame()
+
+colnames(count_GT_i) <- c("REF", "HET", "ALT")
+count_GT_i <- count_GT_i %>% mutate(HET_ALT = HET + ALT,
+                                    cell_merge = rownames(count_GT_i)) 
+
+#Select gene for visualization 
+RNA_mat_i_sel <- RNA_mat_i[,Genes]
+RNA_mat_i_sel <- RNA_mat_i %>% mutate(cell_merge = rownames(RNA_mat_i))
+
+to_add_i <- metadata_i %>% dplyr::select(CellTypes, cell_merge)
+
+#Merge with Gene info
+count_GT_i <- count_GT_i %>% left_join(RNA_mat_i_sel, by = "cell_merge") %>% 
+                             left_join(to_add_i, by = "cell_merge") %>% 
+                             mutate(sample = i)
+
+
+
+#Assign top and bottom variant cells
+
+top_thr_i_DZ <- count_GT_i %>% filter(CellTypes == "DZ") %>% pull(HET_ALT) %>% quantile(0.8)
+bot_thr_i_DZ <- count_GT_i %>% filter(CellTypes == "DZ") %>% pull(HET_ALT) %>% quantile(0.2)                                      
+
+top_thr_i_LZ <- count_GT_i %>% filter(CellTypes == "LZ") %>% pull(HET_ALT) %>% quantile(0.8)
+bot_thr_i_LZ <- count_GT_i %>% filter(CellTypes == "LZ") %>% pull(HET_ALT) %>% quantile(0.2)                                       
+
+
+count_GT_i <- count_GT_i %>% mutate(Class = case_when(CellTypes == "DZ" & HET_ALT > top_thr_i_DZ ~ "HIGH",
+                                                      CellTypes == "DZ" & HET_ALT < bot_thr_i_DZ ~ "LOW",
+                                                      CellTypes == "LZ" & HET_ALT > top_thr_i_LZ ~ "HIGH",
+                                                      CellTypes == "LZ" & HET_ALT < bot_thr_i_LZ ~ "LOW"))
+
+
+count_GT_i <- count_GT_i %>% mutate(ID = str_c(sample, CellTypes, Class, sep = "_"))
+
+#Calculate avg expression for each gene in top bottom
+
+to_plot_list <- list()
+for(x in Genes){
+  
+count_GT_i_x <- count_GT_i %>%
+    filter(Class == "HIGH" | Class == "LOW") %>%
+    dplyr::select(ID, !!sym(x)) %>%
+    group_by(ID) %>%
+    summarise(avg = mean(.data[[x]], na.rm = TRUE)) %>% # Using .data to access variable x dynamically
+    mutate(sample = i,
+           Gene = x)
+
+to_plot_list[[x]] <- count_GT_i_x
+
+}
+
+to_plot_list_list[[i]] <- to_plot_list
+
+count_GT_list[[i]] <- count_GT_i
+
+}
+
+
+#Plot heatmap all genes
+flattened_to_plot <- map(to_plot_list_list, bind_rows)
+to_plot <- bind_rows(flattened_to_plot, .id = "sample")
+
+to_plot_wide <- to_plot %>%
+  pivot_wider(names_from = Gene, values_from = avg)
+
+# Set 'ID' as row names and remove 'ID' and 'sample' columns
+to_rownames <- to_plot_wide$ID  # Extract the ID column for row names
+to_plot_wide <- to_plot_wide %>%
+  dplyr::select(-ID, -sample) %>% 
+  as.data.frame()  # Convert to data frame for setting row names
+rownames(to_plot_wide) <- to_rownames  # Assign row names
+
+
+myBreaks = seq(-2, 2, by = 0.1)
+#breaksList <- seq(min(RNA_seq_iPSCs), max(RNA_seq_iPSCs), length.out = 50)
+
+#Set colors for dataset
+#myColor <- colorRampPalette(rev(brewer.pal(n = 7, name = "RdBu")))(length(breaksList))
+myColor = colorRampPalette(c("#F6F5F2", "yellow3", "#337357"))(length(myBreaks))
+
+
+
+
+
+title = "SDR005_HIGH_LOW_heatmap_LZ_DZ.pdf"
+p <- pheatmap(to_plot_wide,
+         #color = inferno(255),
+         #color = brewer.pal(11, "RdBu"),
+        color = myColor,
+         scale = "column",
+         #scale = "none",
+         cluster_cols = TRUE,
+         cluster_rows = FALSE,
+         border_color = NA,
+         show_colnames = TRUE,
+         show_rownames = TRUE,
+         drop_levels = TRUE,
+         #annotation_row = mat_row,
+         #annotation_col = mat_col,
+         #annotation_colors = group_colors_heatmap ,
+         #cutree_cols = 3,
+         #cutree_rows = 2
+         #breaks = myBreaks,
+         main = title
+)
+
+
+ggsave(filename = title, path = "SDR005_Stat_testing_GO", plot = p, device = "pdf", scale = 1,
+       width = 15, height = 15, units = "cm", dpi = 300)
+
+p
+
+
+
+
+
+to_file <- to_plot_wide %>% mutate(ID = rownames(to_plot_wide ))
+
+
+file_name = "Fig4_M_i_SDR005_HIGH_LOW_heatmap_LZ_DZs.csv"
+write.csv(to_file, paste0(file_save_dir, "/", file_name), row.names = FALSE) 
+
+
+
+
+
+
+
+```
+
+
